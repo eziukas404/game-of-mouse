@@ -112,14 +112,14 @@
     <label for="playerSpeed">Player speed (× Mouse)</label>
     <input id="playerSpeed" type="number" value="2.0" min="1.1" max="4.0" step="0.1">
 
-    <label for="reaction">Prepared movement reaction (ms)</label>
+    <label for="reaction">Strategy reaction / decision baseline (ms)</label>
     <input id="reaction" type="number" value="400" min="150" max="1500" step="50">
 
-    <label for="communication">Orchestrator verbal overhead (ms)</label>
+    <label for="communication">Verbal / coordination overhead (ms)</label>
     <input id="communication" type="number" value="700" min="200" max="2500" step="50">
 
     <label for="humanError">Human timing/error (%)</label>
-    <input id="humanError" type="number" value="8" min="0" max="50" step="1">
+    <input id="humanError" type="number" value="12" min="0" max="50" step="1">
 
     <label for="mouseSafety">Do-not-move radius near Mouse</label>
     <input id="mouseSafety" type="number" value="90" min="0" max="250" step="10">
@@ -147,10 +147,12 @@
         Mouse locks onto the current empty chair and keeps walking only to that chair.
         When a defender reaches it first, the defender's old chair becomes the new target.
         Mouse speed is based on normal walking pace. Player speed is a multiplier of Mouse speed.
-        Human timing is strategy-dependent. A prepared physical response can start in roughly 0.3–0.6 s,
-        while choosing among several people takes longer. The Orchestrator model adds decision time plus verbal/comprehension overhead,
-        so a normal command usually starts movement after roughly 1.4–2.0 s rather than under one second.
+        Human timing is strategy-dependent and the timing controls automatically change when you choose a strategy.
+        A prepared physical response can start in roughly 0.3–0.6 s, while choosing among several people takes longer.
+        The Orchestrator adds decision time plus verbal/comprehension overhead, so a normal command usually starts movement
+        after roughly 1.5–2.2 s rather than under one second. Default human timing variation is 12%.
         Chairs are physical obstacles: the Mouse and moving defenders route around them instead of passing through them.
+        A player who stands must complete a move to another chair and cannot simply sit back on the chair they just left.
         Players sitting inside the Mouse safety radius are not allowed to stand.
       </div>
     </div>
@@ -194,6 +196,26 @@
     status:$('status'), detail:$('detail'), time:$('mTime'), mouseDist:$('mMouseDist'),
     moves:$('mMoves'), target:$('mTarget'), outcome:$('mOutcome'), results:$('results')
   };
+
+  const TIMING_PRESETS = {
+    'Superman':          { reaction: 400, communication: 0 },
+    'Circular Movement': { reaction: 450, communication: 0 },
+    'Pairs':             { reaction: 500, communication: 100 },
+    'Zoning':            { reaction: 600, communication: 150 },
+    'Self-Organization': { reaction: 700, communication: 0 },
+    'Orchestrator':      { reaction: 650, communication: 800 }
+  };
+
+  function applyTimingPreset(strategy){
+    const preset = TIMING_PRESETS[strategy];
+    if(!preset) return;
+    controls.reaction.value = preset.reaction;
+    controls.communication.value = preset.communication;
+    controls.communication.disabled = strategy !== 'Orchestrator' && strategy !== 'Pairs' && strategy !== 'Zoning';
+    controls.communication.title = controls.communication.disabled
+      ? 'This strategy does not normally require verbal coordination.'
+      : 'Default coordination overhead for this strategy.';
+  }
 
   const CHAIR_MIN = 58;
   const PADDING = 48;
@@ -301,8 +323,8 @@
       mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
       playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
       reaction:inputNum(controls.reaction,400,150,1500)/1000,
-      communication:inputNum(controls.communication,700,200,2500)/1000,
-      error:inputNum(controls.humanError,8,0,50)/100,
+      communication:inputNum(controls.communication,0,0,2500)/1000,
+      error:inputNum(controls.humanError,12,0,50)/100,
       safety:inputNum(controls.mouseSafety,90,0,250),
       maxTime:inputNum(controls.maxTime,180,10,1800)
     };
@@ -348,7 +370,7 @@
     let pid=0;
     for(let i=0;i<c.chairs;i++){
       if(i===empty) continue;
-      players.push({id:pid++,chair:i,pair:null});
+      players.push({id:pid++,chair:i,pair:null,lastDepartedChair:null,lastSeatedChair:i});
     }
     for(let i=0;i+1<players.length;i+=2){
       players[i].pair=players[i+1].id;
@@ -559,9 +581,18 @@
 
   function startMove(player){
     if(!player || player.chair===state.target || !safeToStand(player)) return;
+
     const origin=player.chair;
     const target=state.target;
+
+    // Explicit physical rule:
+    // once a player stands up from a chair, they must complete a move to another chair.
+    // They cannot abort and return to the chair they just left.
+    if(player.lastDepartedChair === target && player.lastSeatedChair === origin){
+      return;
+    }
     const from=chair(origin), to=chair(target);
+    player.lastDepartedChair=origin;
     player.chair=null; // Butt is off the chair: origin is now empty.
     const route=buildPath(from,to,[origin,target]);
     state.activeMove={
@@ -578,6 +609,7 @@
     const p=playerById(m.playerId);
     if(!p) return;
     p.chair=m.target;
+    p.lastSeatedChair=m.target;
     state.fatigue[p.id]=(state.fatigue[p.id]||0)+1;
     state.moves++;
     state.lastVacatedBy=p.id;
@@ -794,9 +826,13 @@
   $('pause').addEventListener('click',pause);
   $('reset').addEventListener('click',resetState);
   $('batch').addEventListener('click',batchCompare);
-  controls.strategy.addEventListener('change',generateRoom);
+  controls.strategy.addEventListener('change',()=>{
+    applyTimingPreset(controls.strategy.value);
+    generateRoom();
+  });
   window.addEventListener('resize',()=>{ if(!state?.running) generateRoom(); });
 
+  applyTimingPreset(controls.strategy.value);
   generateRoom();
 })();
 </script>
