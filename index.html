@@ -365,7 +365,53 @@
       positions.push(p);
     }
 
-    const empty=Math.floor(Math.random()*c.chairs);
+    // Real-life start:
+    // the Mouse approaches from the LEFT, while the team deliberately leaves
+    // an empty chair on the RIGHT, as far from the Mouse as practical.
+    let mouse=null;
+    let bestMouse=null;
+    let bestClearance=-1;
+
+    for(let k=0;k<3000;k++){
+      const p={
+        x:rand(PADDING, Math.min(w*0.18, PADDING+90)),
+        y:rand(PADDING,h-PADDING)
+      };
+
+      const clearance=Math.min(...positions.map(q=>dist(p,q)));
+      if(clearance>bestClearance){
+        bestClearance=clearance;
+        bestMouse=p;
+      }
+      if(clearance>70){
+        mouse=p;
+        break;
+      }
+    }
+    mouse=mouse||bestMouse||{x:PADDING,y:h/2};
+
+    // Prefer chairs clearly on the right side of the room.
+    let rightSide=positions
+      .map((p,i)=>({id:i,p}))
+      .filter(x=>x.p.x>=w*0.58);
+
+    if(!rightSide.length){
+      rightSide=positions.map((p,i)=>({id:i,p}));
+    }
+
+    // Choose the chair with the longest practical opening distance from the Mouse.
+    // Euclidean distance is used here because this is how humans would set up the room visually.
+    rightSide.sort((a,b)=>dist(mouse,b.p)-dist(mouse,a.p));
+    let empty=rightSide[0].id;
+
+    // Also honor the configured minimum initial distance when possible.
+    const minStartPx=c.startDistanceM*PX_PER_METER;
+    const farEnough=rightSide.filter(x=>dist(mouse,x.p)>=minStartPx);
+    if(farEnough.length){
+      farEnough.sort((a,b)=>dist(mouse,b.p)-dist(mouse,a.p));
+      empty=farEnough[0].id;
+    }
+
     const players=[];
     let pid=0;
     for(let i=0;i<c.chairs;i++){
@@ -383,17 +429,6 @@
       const a=players.find(p=>p.id===ids[i]), b=players.find(p=>p.id===ids[i+1]);
       a.pair=b.id; b.pair=a.id;
     }
-
-    const minStartPx=c.startDistanceM*PX_PER_METER;
-    let mouse=null,best=null,bestD=-1;
-    for(let k=0;k<5000;k++){
-      const p={x:rand(PADDING,w-PADDING),y:rand(PADDING,h-PADDING)};
-      if(!positions.every(q=>dist(p,q)>70)) continue;
-      const d=dist(p,positions[empty]);
-      if(d>bestD){ bestD=d; best=p; }
-      if(d>=minStartPx){ mouse=p; break; }
-    }
-    mouse=mouse||best||{x:w/2,y:h/2};
 
     return {
       w,h,
@@ -528,7 +563,7 @@
     baseRoom=room;
     initState(baseRoom,c.strategy,c,true);
     ui.status.textContent='Room generated.';
-    ui.detail.textContent='Same room can now be reused when you change strategy.';
+    ui.detail.textContent='Mouse starts from the left; initial empty chair is on the right and far from the Mouse. Changing strategy keeps this exact room.';
   }
 
   function roughArrival(player,targetId){
@@ -1042,7 +1077,7 @@
       '<table><thead><tr><th>Strategy</th><th>Avg</th><th>Median</th><th>P90</th><th>Conflicts/run</th><th>Survived</th></tr></thead><tbody>'+
       rows.map(r=>`<tr><td>${r.s}</td><td>${r.avg.toFixed(1)}s</td><td>${r.med.toFixed(1)}s</td><td>${r.p90.toFixed(1)}s</td><td>${r.conf.toFixed(2)}</td><td>${r.wins}/${r.n}</td></tr>`).join('')+
       '</tbody></table>'+
-      '<div class="mini" style="margin-top:8px">Each strategy was tested on the same 250 room layouts. Strategy-specific human timing presets are applied automatically; shared physical settings remain identical.</div>';
+      '<div class="mini" style="margin-top:8px">250 different random room layouts are generated. For each layout, all six strategies are tested on that exact same chair layout, Mouse start position and initial empty chair. This is a paired comparison, not one room repeated 250 times and not separate random rooms per strategy.</div>';
 
     ui.status.textContent='Paired comparison complete.';
     if(baseRoom) initState(baseRoom,controls.strategy.value,cfg(),true);
