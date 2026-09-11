@@ -340,60 +340,150 @@
     );
   }
 
-  function segmentBlocker(a,b,ignoreIds=[]){
-    let best=null,bestAlong=Infinity;
-    const vx=b.x-a.x,vy=b.y-a.y,len=Math.hypot(vx,vy)||1;
+  function pointBlockedByChair(p,ignoreIds=[]){
+    const clearance=CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS;
     for(const ch of state.room.chairs){
       if(ignoreIds.includes(ch.id)) continue;
-      if(pointSegmentDistance(ch,a,b)<CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS){
-        const along=((ch.x-a.x)*vx+(ch.y-a.y)*vy)/len;
-        if(along>0 && along<len && along<bestAlong){ best=ch;bestAlong=along; }
+      if(dist(p,ch)<clearance) return true;
+    }
+    return false;
+  }
+
+  function lineClear(a,b,ignoreIds=[]){
+    const clearance=CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS;
+    for(const ch of state.room.chairs){
+      if(ignoreIds.includes(ch.id)) continue;
+      if(pointSegmentDistance(ch,a,b)<clearance) return false;
+    }
+    return true;
+  }
+
+  function firstBlockingChair(a,b,ignoreIds=[]){
+    const clearance=CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS;
+    const vx=b.x-a.x,vy=b.y-a.y;
+    const len=Math.hypot(vx,vy)||1;
+    let best=null,bestAlong=Infinity;
+
+    for(const ch of state.room.chairs){
+      if(ignoreIds.includes(ch.id)) continue;
+      if(pointSegmentDistance(ch,a,b)>=clearance) continue;
+
+      const along=((ch.x-a.x)*vx+(ch.y-a.y)*vy)/len;
+      if(along>0.02 && along<len && along<bestAlong){
+        best=ch;
+        bestAlong=along;
       }
     }
     return best;
   }
 
-  function detourPoint(a,b,obstacle,side){
-    const vx=b.x-a.x,vy=b.y-a.y,len=Math.hypot(vx,vy)||1;
-    const nx=-vy/len,ny=vx/len;
-    const off=CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS+0.18;
-    return {
-      x:clamp(obstacle.x+nx*off*side,ROOM_MARGIN,WORLD_W-ROOM_MARGIN),
-      y:clamp(obstacle.y+ny*off*side,ROOM_MARGIN,WORLD_H-ROOM_MARGIN)
+  function detourAroundChair(current,end,obstacle,side,ignoreIds=[]){
+    const dx=end.x-current.x,dy=end.y-current.y;
+    const dl=Math.hypot(dx,dy)||1;
+    const ux=dx/dl,uy=dy/dl;
+    const nx=-uy*side,ny=ux*side;
+
+    // Go both sideways and slightly past the obstacle. This prevents oscillating
+    // against the same chair and keeps the planner strictly bounded.
+    const lateral=CHAIR_RADIUS+CHAIR_PATH_CLEARANCE+HUMAN_RADIUS+0.24;
+    const forward=CHAIR_RADIUS+HUMAN_RADIUS+0.18;
+
+    const p={
+      x:clamp(obstacle.x+nx*lateral+ux*forward,ROOM_MARGIN,WORLD_W-ROOM_MARGIN),
+      y:clamp(obstacle.y+ny*lateral+uy*forward,ROOM_MARGIN,WORLD_H-ROOM_MARGIN)
     };
+
+    if(pointBlockedByChair(p,ignoreIds.concat(obstacle.id))) return null;
+    return p;
   }
 
   function buildPath(start,end,ignoreIds=[]){
-    let points=[{x:start.x,y:start.y},{x:end.x,y:end.y}];
-    for(let pass=0;pass<18;pass++){
-      let changed=false;
-      const next=[points[0]];
-      for(let i=0;i<points.length-1;i++){
-        const a=points[i],b=points[i+1];
-        const block=segmentBlocker(a,b,ignoreIds);
-        if(!block){ next.push(b);continue; }
-        const p1=detourPoint(a,b,block,1),p2=detourPoint(a,b,block,-1);
-        const score=p=>{
-          let penalty=0;
-          if(!insideRoom(p)) penalty+=1000;
-          if(segmentBlocker(a,p,ignoreIds.concat(block.id))) penalty+=1000;
-          if(segmentBlocker(p,b,ignoreIds.concat(block.id))) penalty+=1000;
-          return dist(a,p)+dist(p,b)+penalty;
-        };
-        next.push(score(p1)<=score(p2)?p1:p2);
-        next.push(b);
-        changed=true;
+    // Fast bounded geometric planner. It can never grow exponentially or lock the browser.
+    if(lineClear(start,end,ignoreIds)) return [{x:end.x,y:end.y}];
+
+    const route=[];
+    let current={x:start.x,y:start.y};
+    const seen=new Map();
+
+    for(let hop=0;hop<18;hop++){
+      const block=firstBlockingChair(current,end,ignoreIds);
+      if(!block){
+        route.push({x:end.x,y:end.y});
+        return route;
       }
-      points=next;
-      if(!changed) break;
+
+      const count=(seen.get(block.id)||0)+1;
+      seen.set(block.id,count);
+
+      let c1=detourAroundChair(current,end,block,1,ignoreIds);
+      let c2=detourAroundChair(current,end,block,-1,ignoreIds);
+
+      // If we hit the same obstacle again, bias farther around it rather than bouncing.
+      if(count>1){
+        const dx=end.x-current.x,dy=end.y-current.y,dl=Math.hypot(dx,dy)||1;
+        const ux=dx/dl,uy=dy/dl;
+        const nx=-uy,ny=ux;
+        const extra=0.25*Math.min(count,3);
+
+        if(c1){
+          c1={
+            x:clamp(c1.x+nx*extra+ux*extra,ROOM_MARGIN,WORLD_W-ROOM_MARGIN),
+            y:clamp(c1.y+ny*extra+uy*extra,ROOM_MARGIN,WORLD_H-ROOM_MARGIN)
+          };
+        }
+        if(c2){
+          c2={
+            x:clamp(c2.x-nx*extra+ux*extra,ROOM_MARGIN,WORLD_W-ROOM_MARGIN),
+            y:clamp(c2.y-ny*extra+uy*extra,ROOM_MARGIN,WORLD_H-ROOM_MARGIN)
+          };
+        }
+      }
+
+      function score(p){
+        if(!p) return Infinity;
+        let penalty=0;
+        if(pointBlockedByChair(p,ignoreIds.concat(block.id))) penalty+=1000;
+        const nextBlock=firstBlockingChair(p,end,ignoreIds);
+        if(nextBlock) penalty+=0.6;
+        return dist(current,p)+dist(p,end)+penalty;
+      }
+
+      const s1=score(c1),s2=score(c2);
+      const chosen=s1<=s2?c1:c2;
+
+      if(!chosen || !Number.isFinite(chosen.x) || !Number.isFinite(chosen.y)){
+        // Safe bounded fallback. Movement collision checks still stop illegal clipping.
+        route.push({x:end.x,y:end.y});
+        return route;
+      }
+
+      route.push(chosen);
+      current=chosen;
     }
-    return points.slice(1);
+
+    // Hard cap reached: always return rather than hanging.
+    route.push({x:end.x,y:end.y});
+    return route;
   }
 
   function pathLength(start,end,ignoreIds=[]){
     const pts=buildPath(start,end,ignoreIds);
     let total=0,prev=start;
-    for(const p of pts){ total+=dist(prev,p);prev=p; }
+    for(const p of pts){
+      total+=dist(prev,p);
+      prev=p;
+    }
+    return total;
+  }
+
+  function currentMouseRouteRemaining(){
+    if(!state.mouseRoute || !state.mouseRoute.length){
+      return dist(state.mouse,chair(state.target));
+    }
+    let total=dist(state.mouse,state.mouseRoute[0]);
+    for(let i=0;i<state.mouseRoute.length-1;i++){
+      total+=dist(state.mouseRoute[i],state.mouseRoute[i+1]);
+    }
     return total;
   }
 
@@ -554,7 +644,7 @@
   }
 
   function targetProgress(){
-    const remain=pathLength(state.mouse,chair(state.target),[state.target]);
+    const remain=currentMouseRouteRemaining();
     return clamp(1-remain/Math.max(.1,state.targetStartDistance),0,1);
   }
 
@@ -998,7 +1088,7 @@
       const p=playerById(m.playerId);
 
       if(state.c.strategy==='Superman' && m.phase==='shadow'){
-        const mouseETA=pathLength(state.mouse,chair(state.target),[state.target])/state.c.mouseSpeed;
+        const mouseETA=currentMouseRouteRemaining()/state.c.mouseSpeed;
         const runDist=remainingMoveDistance(m);
         const sprintETA=movementTime(runDist,m.currentSpeed,sprintTopSpeed(p),acceleration(p));
         const margin=mouseETA-sprintETA;
