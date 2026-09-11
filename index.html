@@ -110,17 +110,17 @@
     <label for="mouseSpeed">Mouse walking speed (m/s)</label>
     <input id="mouseSpeed" type="number" value="1.4" min="0.5" max="3.0" step="0.1">
 
-    <label for="playerSpeed">Player speed (× Mouse)</label>
-    <input id="playerSpeed" type="number" value="2.0" min="1.1" max="4.0" step="0.1">
+    <label for="playerSpeed">Defender speed scale (research baseline = 1.0)</label>
+    <input id="playerSpeed" type="number" value="1.0" min="0.6" max="1.5" step="0.05">
 
-    <label for="reaction">Strategy reaction / decision baseline (ms)</label>
-    <input id="reaction" type="number" value="250" min="100" max="2000" step="50">
+    <label for="reaction">Extra strategy decision overhead (ms)</label>
+    <input id="reaction" type="number" value="20" min="0" max="1000" step="10">
 
-    <label for="communication">Verbal / coordination overhead (ms)</label>
-    <input id="communication" type="number" value="0" min="0" max="2500" step="50">
+    <label for="communication">Extra verbal / coordination overhead (ms)</label>
+    <input id="communication" type="number" value="0" min="0" max="1500" step="25">
 
-    <label for="humanError">Human timing/error (%)</label>
-    <input id="humanError" type="number" value="6" min="0" max="50" step="1">
+    <label for="humanError">Human timing variability (%)</label>
+    <input id="humanError" type="number" value="10" min="0" max="35" step="1">
 
     <label for="mouseSafety">Do-not-move radius near Mouse</label>
     <input id="mouseSafety" type="number" value="90" min="0" max="250" step="10">
@@ -148,18 +148,20 @@
     <div class="status" style="margin-top:14px">
       <strong>Model assumptions</strong>
       <div class="mini" style="margin-top:6px;line-height:1.5">
-        Mouse locks onto one empty chair and keeps walking to it until that chair is occupied.
-        If several defenders stand, several chairs can become empty. Once the locked target closes,
-        the Mouse chooses the nearest currently empty chair. Chairs are physical obstacles for everyone.
-        Superman and Orchestrator allow only one intended mover. Circular, Pairs, Zoning and Self-Organization
-        can produce simultaneous responders; they may notice the conflict late, hesitate and retarget to another
-        empty chair. Once a player stands, they must sit on a different chair before they can return to the one
-        they left. People sitting inside the Mouse safety radius do not stand.
-        Human speeds vary by person, repeated running adds mild fatigue, the Orchestrator makes an imperfect
-        visual decision rather than an exact calculation, and Superman makes the GO decision slightly before
-        the visual halfway point so that, after human reaction delay, movement begins around halfway.
-        The Mouse is also a physical human obstacle: defenders must pass around it and can be blocked by it;
-        they are never allowed to pass through or touch the Mouse. Monte Carlo comparisons use the same room layouts for all strategies.
+        The human model now separates visual perception, choice/decision, auditory command recognition,
+        language understanding, movement preparation and physical execution. Typical priors are centered near
+        ~240 ms visual perception, ~170 ms auditory detection and ~150 ms movement preparation; choice time grows
+        with the number of alternatives. These are sampled per person and per event rather than represented by one
+        fixed reaction number. Defenders have individual walking speed, sprint speed and acceleration, so they do
+        not jump instantly to maximum velocity. The speed control scales these research-based physical traits.
+        Superman continuously estimates whether he can still beat the Mouse: he may begin by walking/jogging after
+        it and then accelerate into a sprint, rather than launching at a fixed halfway percentage. Orchestrator
+        includes the coordinator's visual scan/choice plus speech, the recipient hearing/understanding the call,
+        and movement preparation. Loose strategies can still create duplicate movers, hesitation and retargeting.
+        Mouse and defenders route around chairs and defenders may not touch or pass through the Mouse. The real-life
+        start is preserved: Mouse enters from the left and the first vacancy is far to the right. Monte Carlo uses
+        paired room layouts across strategies. Real observations are used as calibration references, not as forced
+        target rankings.
       </div>
     </div>
 
@@ -208,21 +210,22 @@
   };
 
   const TIMING_PRESETS = {
-    // These are practical "notice/decide/start" baselines, not laboratory reaction tests.
-    'Superman':          { reaction:250, communication:0 },
-    'Circular Movement': { reaction:300, communication:0 },
-    'Pairs':             { reaction:350, communication:75 },
-    'Zoning':            { reaction:400, communication:100 },
-    'Self-Organization': { reaction:450, communication:0 },
-    // A real orchestrator must scan, choose, call a person, and be understood.
-    'Orchestrator':      { reaction:700, communication:600 }
+    // Extra overhead only. Core perception / motor-preparation time is sampled separately.
+    'Superman':          { reaction:20,  communication:0 },
+    'Circular Movement': { reaction:40,  communication:0 },
+    'Pairs':             { reaction:80,  communication:50 },
+    'Zoning':            { reaction:120, communication:75 },
+    'Self-Organization': { reaction:90,  communication:0 },
+    // Orchestrator's main choice cost is Hick-like and depends on candidate count.
+    // "communication" here is extra speech-production / room-noise overhead.
+    'Orchestrator':      { reaction:0,   communication:250 }
   };
 
   const CONFLICT_BASE = {
-    'Circular Movement':0.14,
-    'Pairs':0.28,
-    'Zoning':0.30,
-    'Self-Organization':0.48
+    'Circular Movement':0.10,
+    'Pairs':0.20,
+    'Zoning':0.25,
+    'Self-Organization':0.50
   };
 
   const CHAIR_MIN = 58;
@@ -242,6 +245,26 @@
 
   function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
   function rand(a,b){ return Math.random()*(b-a)+a; }
+
+  function normalRandom(mean,sd){
+    // Box-Muller transform.
+    let u=0,v=0;
+    while(u===0) u=Math.random();
+    while(v===0) v=Math.random();
+    return mean + sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+
+  function truncNormal(mean,sd,min,max){
+    for(let i=0;i<12;i++){
+      const x=normalRandom(mean,sd);
+      if(x>=min && x<=max) return x;
+    }
+    return clamp(normalRandom(mean,sd),min,max);
+  }
+
+  function eventSample(base,relativeSD=0.10,minFactor=0.65,maxFactor=1.55){
+    return base * clamp(normalRandom(1,relativeSD),minFactor,maxFactor);
+  }
   function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
   function clone(o){ return JSON.parse(JSON.stringify(o)); }
 
@@ -269,10 +292,10 @@
       strategy:controls.strategy.value,
       chairs:Math.round(inputNum(controls.chairs,20,6,60)),
       mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
-      playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
-      reaction:inputNum(controls.reaction,250,100,2000)/1000,
-      communication:inputNum(controls.communication,0,0,2500)/1000,
-      error:inputNum(controls.humanError,6,0,50)/100,
+      playerMult:inputNum(controls.playerSpeed,1.0,0.6,1.5),
+      reaction:inputNum(controls.reaction,20,0,1000)/1000,
+      communication:inputNum(controls.communication,0,0,1500)/1000,
+      error:inputNum(controls.humanError,10,0,35)/100,
       safety:inputNum(controls.mouseSafety,90,0,250),
       startDistanceM:inputNum(controls.startDistance,4.0,1.0,12.0),
       maxTime:inputNum(controls.maxTime,180,10,1800)
@@ -490,7 +513,15 @@
       if(i===empty) continue;
       players.push({
         id:pid++, chair:i, pair:null,
-        speedFactor:rand(0.92,1.08),
+        // Research-informed human priors. Each player is a little different.
+        visualMs:truncNormal(240,40,120,500),
+        auditoryMs:truncNormal(170,30,90,350),
+        prepMs:truncNormal(150,30,90,280),
+        decisionSlopeMs:truncNormal(120,20,80,170),
+        languageMs:truncNormal(70,25,25,160),
+        walkMS:truncNormal(1.30,0.18,0.90,1.85),
+        sprintMS:truncNormal(5.20,0.80,3.40,7.20),
+        accelMS2:truncNormal(4.0,0.8,2.4,6.0),
         lastDepartedChair:null, lastSeatedChair:i
       });
     }
@@ -537,10 +568,41 @@
       .sort((a,b)=>a.a-b.a).map(x=>x.id);
   }
 
-  function playerSpeed(player){
+  function fatigueFactor(player){
     const f=state.fatigue[player.id]||0;
-    return state.c.mouseSpeed*PX_PER_METER*state.c.playerMult*
-      player.speedFactor*Math.max(0.72,1-f*0.018);
+    return Math.max(0.78,1-f*0.014);
+  }
+
+  function sprintTopSpeed(player){
+    return player.sprintMS * state.c.playerMult * fatigueFactor(player) * PX_PER_METER;
+  }
+
+  function walkTopSpeed(player){
+    return player.walkMS * state.c.playerMult * Math.max(0.90,fatigueFactor(player)) * PX_PER_METER;
+  }
+
+  function acceleration(player){
+    return player.accelMS2 * state.c.playerMult * PX_PER_METER;
+  }
+
+  // Used only for rough ordering/ETA calculations. Actual motion accelerates over time.
+  function playerSpeed(player){
+    return sprintTopSpeed(player);
+  }
+
+  function movementTime(distancePx,v0Px,speedPx,accelPx){
+    if(distancePx<=0) return 0;
+    const v0=Math.max(0,v0Px||0), vmax=Math.max(1,speedPx), a=Math.max(1,accelPx);
+    if(v0>=vmax){
+      return distancePx/vmax;
+    }
+    const tAcc=(vmax-v0)/a;
+    const dAcc=v0*tAcc+0.5*a*tAcc*tAcc;
+    if(dAcc>=distancePx){
+      // Solve d = v0*t + 1/2*a*t^2.
+      return (-v0+Math.sqrt(v0*v0+2*a*distancePx))/a;
+    }
+    return tAcc+(distancePx-dAcc)/vmax;
   }
 
   function safeToStand(player){
@@ -557,12 +619,46 @@
     );
   }
 
-  function errorJitter(){
-    return 1+rand(-state.c.error,state.c.error);
+  function timingNoise(value){
+    const rel=Math.max(0.02,state.c.error);
+    return value * clamp(normalRandom(1,rel),0.60,1.75);
   }
 
-  function strategyDelay(extra=0){
-    return Math.max(0,(state.c.reaction+state.c.communication+extra)*errorJitter());
+  function responseDelay(player,reason='normal',choiceCount=1,extra=0){
+    const visual=eventSample(player.visualMs,0.08)/1000;
+    const prep=eventSample(player.prepMs,0.10)/1000;
+    const extraDecision=state.c.reaction;
+    const extraCoord=state.c.communication;
+
+    if(reason==='superman' || reason==='superman-shadow'){
+      // Continuous tracking reduces the need for a full "new event" visual reaction.
+      const trackingUpdate=visual*0.45;
+      return timingNoise(trackingUpdate + prep + extraDecision + extra);
+    }
+
+    if(reason==='orchestrator'){
+      // Coordinator: see -> choose among candidates (Hick-like) -> speak.
+      // Recipient: hear name/command -> understand -> prepare movement.
+      const orch=state.orchestrator;
+      const orchVisual=eventSample(orch.visualMs,0.08)/1000;
+      const bits=Math.log2(Math.max(2,choiceCount)+1);
+      const choice=(eventSample(orch.decisionSlopeMs,0.10)*bits)/1000;
+      const speech=eventSample(orch.speechMs,0.12)/1000 + extraCoord;
+      const hear=eventSample(player.auditoryMs,0.10)/1000;
+      const language=eventSample(player.languageMs,0.12)/1000;
+      return timingNoise(orchVisual+choice+speech+hear+language+prep+extraDecision+extra);
+    }
+
+    let bits=0;
+    if(reason==='intended') bits=0.20;       // circular: almost predetermined
+    else if(reason==='pair') bits=0.80;
+    else if(reason==='zone') bits=1.15;
+    else if(reason==='self') bits=1.0;        // "should I go?" is a binary choice
+    else if(reason==='premature' || reason==='other-pair' || reason==='same-zone') bits=1.0;
+    else bits=0.65;
+
+    const choice=(eventSample(player.decisionSlopeMs,0.10)*bits)/1000;
+    return timingNoise(visual+choice+prep+extraDecision+extraCoord+extra);
   }
 
   function zoneOf(ch){
@@ -579,10 +675,9 @@
     state.mouseRouteTarget=null;
     const len=pathLength(state.mouse,chair(id),[id]);
     state.targetStartDistance=Math.max(1,len);
-    // Skilled Superman decides slightly before the visual halfway point; after reaction delay,
-    // actual body movement normally begins around halfway. This avoids making a 2× runner
-    // mathematically late before obstacles/crossing are even considered.
-    state.superTrigger=clamp(0.40+rand(-0.04,0.04),0.34,0.46);
+    // Superman no longer uses a fixed percentage trigger.
+    // This is a per-leg preferred safety margin for his continuous interception estimate.
+    state.superTrigger=clamp(normalRandom(0.42,0.08),0.22,0.70);
     // People who have not yet stood can update to the new situation.
     state.pendingStarts=[];
   }
@@ -598,7 +693,12 @@
     state.superPair=[a,b];
 
     // The team deliberately assigns its quickest runner to the Superman role.
-    const fastest=state.room.players.slice().sort((x,y)=>y.speedFactor-x.speedFactor)[0];
+    const fastest=state.room.players.slice().sort((x,y)=>{
+      // For a few-metre indoor dash, acceleration matters almost as much as top speed.
+      const sx=x.sprintMS + 0.55*x.accelMS2;
+      const sy=y.sprintMS + 0.55*y.accelMS2;
+      return sy-sx;
+    })[0];
     const atB=occupantOf(b);
     if(fastest && atB && fastest.id!==atB.id){
       const old=fastest.chair;
@@ -616,6 +716,11 @@
       mouse:{x:room.mouse.x,y:room.mouse.y}, mouseDistance:0,
       target:room.empty, targetVersion:0, plannedVersion:-1, targetStartDistance:1,
       superTrigger:0.45, superPair:[], supermanId:null,
+      orchestrator:{
+        visualMs:truncNormal(240,40,120,500),
+        decisionSlopeMs:truncNormal(120,20,80,170),
+        speechMs:truncNormal(240,55,120,420)
+      },
       moves:0, conflicts:0, retargets:0, mouseBlockTime:0,
       activeMoves:[], pendingStarts:[], fatigue:{}, lastVacatedBy:null,
       circularOrder:[], mouseRoute:[], mouseRouteTarget:null
@@ -642,17 +747,19 @@
   }
 
   function roughArrival(player,targetId){
-    // Humans estimate this visually; use straight-line distance and noisy speed rather than exact path/ETA.
-    const visualD=dist(chair(player.chair),chair(targetId))*rand(0.88,1.12);
-    return visualD/(playerSpeed(player)*rand(0.92,1.08));
+    // Humans estimate geometry noisily. We keep the estimate imperfect even though actual motion uses paths.
+    const visualD=dist(chair(player.chair),chair(targetId))*clamp(normalRandom(1,0.10),0.78,1.25);
+    const estimatedV=sprintTopSpeed(player)*clamp(normalRandom(1,0.08),0.80,1.20);
+    const estimatedA=acceleration(player)*clamp(normalRandom(1,0.10),0.75,1.25);
+    return movementTime(visualD,0,estimatedV,estimatedA);
   }
 
-  function schedule(player,targetId,extraDelay=0,reason='normal'){
+  function schedule(player,targetId,extraDelay=0,reason='normal',choiceCount=1){
     if(!player || player.chair===null) return;
     if(state.pendingStarts.some(x=>x.playerId===player.id) || activeForPlayer(player.id)) return;
     state.pendingStarts.push({
       playerId:player.id,target:targetId,
-      at:state.time+strategyDelay(extraDelay),
+      at:state.time+responseDelay(player,reason,choiceCount,extraDelay),
       version:state.targetVersion,reason
     });
   }
@@ -690,13 +797,34 @@
     if(state.done) return;
     const s=state.c.strategy;
 
-    // Superman checks continuously because the launch rule depends on Mouse progress.
+    // Superman is a continuous interception task, not a fixed halfway reaction.
     if(s==='Superman'){
       if(state.plannedVersion===state.targetVersion) return;
       if(!state.superPair.includes(state.target)) return;
+
       const sp=playerById(state.supermanId);
       if(!sp || sp.chair===null || sp.chair===state.target || !safeToStand(sp)) return;
-      if(targetProgress()>=state.superTrigger){
+
+      const start=chair(sp.chair), target=chair(state.target);
+      const runDistance=pathLength(start,target,[sp.chair,state.target]);
+      const remainingMouse=pathLength(state.mouse,target,[state.target]);
+
+      // The runner continuously estimates both speeds and available path with modest perceptual noise.
+      const estMouseSpeed=state.c.mouseSpeed*PX_PER_METER*clamp(normalRandom(1,0.05),0.88,1.12);
+      const estSprint=sprintTopSpeed(sp)*clamp(normalRandom(1,0.07),0.82,1.18);
+      const estAccel=acceleration(sp)*clamp(normalRandom(1,0.09),0.78,1.22);
+      const mouseETA=remainingMouse/estMouseSpeed;
+      const sprintETA=movementTime(runDistance,0,estSprint,estAccel);
+
+      // He tries to leave late enough to keep the Mouse committed, but not by a fixed distance percentage.
+      // When there is lots of spare time he may begin by shadowing/jogging after the Mouse.
+      const margin=mouseETA-sprintETA;
+      const progress=targetProgress();
+
+      if(progress>0.12 && margin>state.superTrigger+0.85 && Math.random()<0.035){
+        schedule(sp,state.target,0,'superman-shadow');
+        state.plannedVersion=state.targetVersion;
+      } else if(margin<=state.superTrigger || mouseETA<1.05){
         schedule(sp,state.target,0,'superman');
         state.plannedVersion=state.targetVersion;
       }
@@ -708,7 +836,7 @@
 
     if(s==='Orchestrator'){
       const p=chooseOrchestrator();
-      if(p) schedule(p,state.target,0,'orchestrator');
+      if(p) schedule(p,state.target,0,'orchestrator',Math.max(2,eligiblePlayers().length));
       return;
     }
 
@@ -814,7 +942,10 @@
         x:from.x,y:from.y,
         route:buildPath(from,to,[origin,targetId]),routeIndex:0,
         startedAt:state.time,
-        conflictCheckAt:state.time+rand(0.20,0.48)*(1+state.c.error),
+        currentSpeed:0,
+        phase:ps.reason==='superman-shadow'?'shadow':'sprint',
+        sprintSwitchMargin:clamp(normalRandom(0.40,0.08),0.20,0.65),
+        conflictCheckAt:state.time+clamp(normalRandom(0.34,0.09),0.18,0.58),
         pausedUntil:0,retargets:0,mouseBlockedTime:0,reason:ps.reason
       });
     }
@@ -849,7 +980,7 @@
     m.target=newTarget;
     m.route=buildPath({x:m.x,y:m.y},chair(newTarget),[m.origin,newTarget]);
     m.routeIndex=0;
-    m.pausedUntil=state.time+rand(0.18,0.55)*(1+state.c.error*2);
+    m.pausedUntil=state.time+clamp(normalRandom(0.35,0.10),0.18,0.65)*(1+state.c.error);
     m.retargets++;
     state.retargets++;
     if(why==='conflict') state.conflicts++;
@@ -869,8 +1000,8 @@
       // The person most likely to arrive first keeps the chair. Others notice and improvise.
       const ranked=group.slice().sort((a,b)=>{
         const pa=playerById(a.playerId),pb=playerById(b.playerId);
-        const ta=remainingMoveDistance(a)/playerSpeed(pa);
-        const tb=remainingMoveDistance(b)/playerSpeed(pb);
+        const ta=movementTime(remainingMoveDistance(a),a.currentSpeed||0,sprintTopSpeed(pa),acceleration(pa));
+        const tb=movementTime(remainingMoveDistance(b),b.currentSpeed||0,sprintTopSpeed(pb),acceleration(pb));
         return ta-tb;
       });
       const leader=ranked[0];
@@ -934,7 +1065,39 @@
       }
 
       const p=playerById(m.playerId);
-      let remaining=playerSpeed(p)*dt;
+
+      // Superman may begin by walking/jogging behind the Mouse, then accelerate into a sprint
+      // when his continuously updated interception margin becomes small enough.
+      if(state.c.strategy==='Superman' && m.phase==='shadow'){
+        const remainingMouse=pathLength(state.mouse,chair(state.target),[state.target]);
+        const mouseETA=remainingMouse/(state.c.mouseSpeed*PX_PER_METER);
+        const runDist=remainingMoveDistance(m);
+        const sprintETA=movementTime(runDist,m.currentSpeed||0,sprintTopSpeed(p),acceleration(p));
+
+        if((mouseETA-sprintETA)<=m.sprintSwitchMargin || mouseETA<1.15){
+          m.phase='sprint';
+        }
+      }
+
+      let targetSpeed=sprintTopSpeed(p);
+      if(m.phase==='shadow'){
+        // A purposeful jog: usually around walking-to-light-jog speed, not a full sprint.
+        targetSpeed=Math.min(
+          sprintTopSpeed(p)*0.55,
+          Math.max(walkTopSpeed(p)*1.35,state.c.mouseSpeed*PX_PER_METER*1.03)
+        );
+      }
+
+      // Humans accelerate; they do not teleport from rest to top running speed.
+      const a=acceleration(p);
+      if(m.currentSpeed<targetSpeed){
+        m.currentSpeed=Math.min(targetSpeed,m.currentSpeed+a*dt);
+      }else{
+        // Small controlled deceleration if shadowing or path conditions lower target speed.
+        m.currentSpeed=Math.max(targetSpeed,m.currentSpeed-a*1.35*dt);
+      }
+
+      let remaining=m.currentSpeed*dt;
 
       while(remaining>0 && m.routeIndex<m.route.length){
         const wp=m.route[m.routeIndex];
@@ -947,25 +1110,24 @@
         }
 
         const step=Math.min(remaining,d);
-        const ux=(wp.x-m.x)/d, uy=(wp.y-m.y)/d;
+        const ux=(wp.x-m.x)/d,uy=(wp.y-m.y)/d;
         const proposed={x:m.x+ux*step,y:m.y+uy*step};
 
-        // The Mouse is a moving human obstacle. A defender may go around,
-        // but may never pass through/touch the Mouse.
-        const nearMouse =
-          dist(current,state.mouse) < PLAYER_MOUSE_CLEARANCE + MOUSE_AVOID_LOOKAHEAD ||
+        // Mouse is a moving human obstacle. No touching or clipping through it.
+        const nearMouse=
+          dist(current,state.mouse)<PLAYER_MOUSE_CLEARANCE+MOUSE_AVOID_LOOKAHEAD ||
           segmentApproachesMouse(current,proposed,PLAYER_MOUSE_CLEARANCE);
 
         if(nearMouse && (
-          dist(proposed,state.mouse) < PLAYER_MOUSE_CLEARANCE ||
+          dist(proposed,state.mouse)<PLAYER_MOUSE_CLEARANCE ||
           segmentApproachesMouse(current,proposed,PLAYER_MOUSE_CLEARANCE)
         )){
           const detour=chooseMouseAvoidanceStep(m,step,wp);
 
           if(!detour){
-            // Physically blocked this tick. This is intentionally allowed to cost the game,
-            // matching the real Superman failure mode when the Mouse blocks the corridor.
             m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+            // A sudden block also costs momentum.
+            m.currentSpeed=Math.max(0,m.currentSpeed-a*2.0*dt);
             break;
           }
 
@@ -973,12 +1135,14 @@
           m.y=detour.y;
           remaining-=step;
           m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+          // Sidestepping around another person reduces usable forward speed slightly.
+          m.currentSpeed*=0.985;
           continue;
         }
 
-        // Final hard safety check: never let centers cross the no-touch boundary.
         if(dist(proposed,state.mouse)<PLAYER_MOUSE_CLEARANCE){
           m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+          m.currentSpeed=Math.max(0,m.currentSpeed-a*2.0*dt);
           break;
         }
 
@@ -1199,7 +1363,7 @@
       '<table><thead><tr><th>Strategy</th><th>Avg</th><th>Median</th><th>P90</th><th>Conflicts/run</th><th>Survived</th></tr></thead><tbody>'+
       rows.map(r=>`<tr><td>${r.s}</td><td>${r.avg.toFixed(1)}s</td><td>${r.med.toFixed(1)}s</td><td>${r.p90.toFixed(1)}s</td><td>${r.conf.toFixed(2)}</td><td>${r.wins}/${r.n}</td></tr>`).join('')+
       '</tbody></table>'+
-      '<div class="mini" style="margin-top:8px">250 different random room layouts are generated. For each layout, all six strategies are tested on that exact same chair layout, Mouse start position and initial empty chair. This is a paired comparison, not one room repeated 250 times and not separate random rooms per strategy.</div>';
+      '<div class="mini" style="margin-top:8px">250 different random room layouts are generated. For each layout, all six strategies are tested on that exact same chair layout, Mouse start position and initial empty chair. This is a paired comparison. Real-life reference (small sample, not a forced target): Orchestrator 4s & 12s; Superman 28s & 39s; Self-Organization 23s; later mixed/random rounds mostly 8–30s with a best of 45s.</div>';
 
     ui.status.textContent='Paired comparison complete.';
     if(baseRoom) initState(baseRoom,controls.strategy.value,cfg(),true);
