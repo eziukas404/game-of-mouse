@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Explore six strategies for Game of Mouse, a group chair game. Watch a simulated round and compare results across randomly generated rooms.">
 <title>Game of Mouse Simulator</title>
 <style>
 :root{--bg:#0f172a;--panel:#1e293b;--panel2:#111827;--line:#334155;--text:#f8fafc;--muted:#cbd5e1;
@@ -40,6 +41,13 @@ button{cursor:pointer;font-weight:700}
 .zone-v{top:0;bottom:0;left:50%;width:1px}.zone-h{left:0;right:0;top:50%;height:1px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
 .results{margin-top:14px;overflow:auto}
+.guide{margin-top:18px;line-height:1.6}
+.guide h2{margin:0 0 8px;font-size:20px}
+.guide p{margin:8px 0;color:var(--muted)}
+.guide details{padding:12px 0;border-top:1px solid var(--line)}
+.guide summary{cursor:pointer;font-weight:700}
+.guide dt{margin-top:10px;font-weight:700}
+.guide dd{margin:2px 0 10px;color:var(--muted)}
 table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:6px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right} th:first-child,td:first-child{text-align:left}
 @media(max-width:950px){main{grid-template-columns:1fr}.topbar{grid-template-columns:repeat(3,1fr)}}
 </style>
@@ -47,7 +55,7 @@ table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:6px;bord
 <body>
 <header>
 <h1>Game of Mouse Simulator</h1>
-<p>Stable real-world model: 20 m left-to-right × 10 m bottom-to-top.</p>
+<p>Explore how different team strategies keep the Mouse away from an empty chair.</p>
 </header>
 
 <main>
@@ -100,12 +108,11 @@ table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:6px;bord
 </div>
 
 <div class="status">
-<strong>Stable model rules</strong>
+<strong>About this simulation</strong>
 <div class="mini" style="margin-top:6px">
-Fixed 20×10 m room. Mouse starts on the left; first vacancy is far right. Chairs and Mouse are physical obstacles.
-Movement uses bounded steering, with cached obstacle detours for all players and a fixed limit on route-search work.
-Superman shadows after the Mouse passes, then always commits to sprint by halfway at the latest, or earlier if the time margin gets small.
-Loose strategies can create duplicate movers, confusion, retargeting, and near-Mouse panic mistakes.
+A 20 m × 10 m room, one Mouse, and a group trying to keep the game going by changing chairs.
+Choose a strategy and press Start, or compare all six across 250 random rooms.
+Results describe this simplified model, not a prediction of how long our group will last in a real game.
 </div>
 </div>
 
@@ -128,7 +135,53 @@ Loose strategies can create duplicate movers, confusion, retargeting, and near-M
 </div>
 </div>
 
-<div class="legend">Blue = occupied • Orange = vacancy • Green = moving defender • Red = Mouse</div>
+<div class="legend">Blue chair = occupied • Orange chair = empty • Green person = moving defender • Orange person = paused after a conflict • Red = Mouse</div>
+<div class="panel guide" aria-label="Participant guide">
+<h2>How Game of Mouse works</h2>
+<p>One person is the Mouse. Everyone else starts seated, leaving one empty chair. The Mouse walks toward that chair while the other players try to sit there first. Each move leaves another chair empty, keeping the game going. The round ends when the Mouse reaches its empty target chair.</p>
+<details>
+<summary>Rules and room setup</summary>
+<p>The room is 20 m wide and 10 m deep. With the default 17 people and 17 chairs, there are 16 seated defenders and one Mouse. The Mouse starts on the left, with the first empty chair chosen far away on the right when one is available.</p>
+<p>The intended physical rules are to go around chairs and avoid contact with the Mouse. Once you stand, you must sit on a different chair before returning to the one you left. The Mouse stays focused on its target until someone occupies it, then chooses another empty chair. More than one chair can be empty while people are moving.</p>
+<p>The near-Mouse rule normally prevents a seated defender from standing inside the selected radius. The model sometimes allows an exception, depending on the strategy and the mistake setting.</p>
+</details>
+<details>
+<summary>Try a round or compare strategies</summary>
+<p><strong>Start</strong> begins a round. <strong>Pause</strong> pauses or resumes it. <strong>Reset</strong> returns to the same starting room; random decisions can still make the next run different. <strong>Generate Room</strong> creates a new layout and new player abilities.</p>
+<p><strong>Compare All Strategies × 250</strong> tests every strategy on the same 250 generated rooms: 1,500 simulated rounds in total. Decisions vary between runs. The comparison may take some time and resets the visible round when it finishes.</p>
+<p><strong>Time</strong> is simulated time. <strong>Mouse distance</strong> is the distance the Mouse has travelled. <strong>Moves</strong> counts completed chair changes. <strong>Target</strong> identifies the Mouse's current target chair, marked by a red outline. <strong>Outcome</strong> shows whether the round is ready, running, finished, or has reached the time limit.</p>
+<p>Playback speed controls how quickly you watch a round. Mouse speed and defender speed scale affect movement in the model. Timing variability changes response delays; the near-Mouse radius and mistake baseline affect permission to stand nearby.</p>
+</details>
+<details>
+<summary>What each strategy does</summary>
+<dl>
+<dt>Orchestrator</dt><dd>Selects one available seated defender farthest from the Mouse, with a delay representing the decision and instruction.</dd>
+<dt>Superman</dt><dd>Uses one fast defender and the same two distant chairs. He starts at a slower shadowing pace and switches to a sprint when the Mouse has covered about half its initial distance to the target, or when the estimated time margin becomes small.</dd>
+<dt>Circular Movement</dt><dd>Chooses the next seated defender in an order around the room's centre. Occasionally a second defender also starts.</dd>
+<dt>Pairs</dt><dd>Tries to use the partner of the person who last completed a move, with another available defender as a fallback. An extra defender may also start.</dd>
+<dt>Zoning</dt><dd>Prefers a defender in the quarter of the room opposite the target chair, choosing the closest available candidate to that chair. An extra defender may also start.</dd>
+<dt>Self-Organization</dt><dd>Lets defenders volunteer independently. Up to four may start, which can lead to several people pursuing the same chair and changing targets.</dd>
+</dl>
+</details>
+<details>
+<summary>Reading the comparison table</summary>
+<dl>
+<dt>Avg</dt><dd>Average simulated survival time across the 250 rounds. A few long rounds can raise it considerably.</dd>
+<dt>Median</dt><dd>The middle result when round times are sorted. Use it to judge a typical run.</dd>
+<dt>P90</dt><dd>The 90th-percentile time: roughly 90% of runs end at or below it, with about 10% lasting longer.</dd>
+<dt>Conflicts/run</dt><dd>Average conflict-driven target changes per round. It counts repeated switches as separate events, not physical collisions or unique encounters.</dd>
+<dt>Panic mistakes/run</dt><dd>Average near-Mouse rule exceptions recorded per round. Despite the label, this is not a measure of a person's panic or every bad decision. The counter records permission checks and can include an exception before a player actually stands.</dd>
+</dl>
+<p><strong>180 seconds is the simulation's cutoff.</strong> A result of 180s means the team reached that limit; it does not tell us when they would eventually lose. Counts are per round, not per minute, and small averages can round to 0.00.</p>
+<p>Orchestrator often has no near-Mouse exceptions because it selects someone far from the Mouse. Strategy-specific probabilities also affect this counter, so it is not an independent measure of how disciplined a real team would be.</p>
+</details>
+<details>
+<summary>How this differs from our real game</summary>
+<p>This is a simplified model for discussing strategies, not a validated ranking of our group. The Mouse follows its target and avoids moving defenders; it does not deliberately choose a position to block Superman. Superman keeps the same two chairs rather than adapting his chair pair.</p>
+<p>Fatigue, learning and physical contact between moving defenders are not modelled. Movement is approximate. These assumptions can make simulated rounds last much longer than real ones, especially for Superman.</p>
+<p>When comparing the simulation with our games, consider what actually ended a round: a blocked route, a late decision, or a poor choice of chair. Those observations are more useful than trying to match one survival-time number.</p>
+</details>
+</div>
 </section>
 </main>
 
