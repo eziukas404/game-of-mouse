@@ -70,6 +70,45 @@
       border-radius: 8px;
     }
 
+    .chair {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      background: #6b7280;
+      border: 3px solid #374151;
+      border-radius: 8px;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      user-select: none;
+    }
+
+    .chair.occupied {
+      background: #2563eb;
+    }
+
+    .chair.empty {
+      background: #f59e0b;
+      border-color: #b45309;
+    }
+
+    .mouse {
+      position: absolute;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: #dc2626;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.6);
+      user-select: none;
+    }
+
     @media (max-width: 800px) {
       main {
         grid-template-columns: 1fr;
@@ -109,7 +148,7 @@
       <label for="playerSpeed">Player Speed</label>
       <input id="playerSpeed" type="number" value="2.5" step="0.1">
 
-      <button id="startButton">Start Simulation</button>
+      <button id="generateButton">Generate Room</button>
 
       <div class="status">
         <strong>Status:</strong>
@@ -117,10 +156,82 @@
       </div>
     </section>
 
-    <section class="arena" id="arena">
-    </section>
+    <section class="arena" id="arena"></section>
 
   </main>
+
+  <script>
+    const arena = document.getElementById('arena');
+    const chairsInput = document.getElementById('chairs');
+    const generateButton = document.getElementById('generateButton');
+    const statusText = document.getElementById('statusText');
+
+    function randomBetween(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function generateRoom() {
+      arena.innerHTML = '';
+
+      const chairCount = Math.max(
+        4,
+        Math.min(100, parseInt(chairsInput.value, 10) || 20)
+      );
+
+      chairsInput.value = chairCount;
+
+      const rect = arena.getBoundingClientRect();
+      const width = rect.width;
+      const height = rect.height;
+
+      const padding = 45;
+
+      const emptyChairIndex = Math.floor(Math.random() * chairCount);
+
+      for (let i = 0; i < chairCount; i++) {
+        const chair = document.createElement('div');
+
+        chair.className =
+          i === emptyChairIndex
+            ? 'chair empty'
+            : 'chair occupied';
+
+        chair.textContent =
+          i === emptyChairIndex
+            ? '○'
+            : '●';
+
+        chair.style.left =
+          randomBetween(padding, width - padding) + 'px';
+
+        chair.style.top =
+          randomBetween(padding, height - padding) + 'px';
+
+        chair.dataset.index = i;
+
+        arena.appendChild(chair);
+      }
+
+      const mouse = document.createElement('div');
+      mouse.className = 'mouse';
+      mouse.textContent = '🐭';
+
+      mouse.style.left =
+        randomBetween(padding, width - padding) + 'px';
+
+      mouse.style.top =
+        randomBetween(padding, height - padding) + 'px';
+
+      arena.appendChild(mouse);
+
+      statusText.textContent =
+        'Room generated — Mouse has one target.';
+    }
+
+    generateButton.addEventListener('click', generateRoom);
+
+    generateRoom();
+  </script>
 
 </body>
 </html>
