@@ -3,10 +3,124 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Game of Mouse</title>
+  <title>Game of Mouse Simulator</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #111827;
+      color: #f9fafb;
+    }
+
+    header {
+      padding: 20px;
+      background: #1f2937;
+      border-bottom: 1px solid #374151;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .panel {
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .arena {
+      min-height: 600px;
+      background: #f3f4f6;
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+
+    select,
+    input,
+    button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      border: 1px solid #4b5563;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      background: #111827;
+      border-radius: 8px;
+    }
+
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
+
 <body>
-  <h1>Game of Mouse</h1>
-  <p>Human strategy simulator — first test page.</p>
+
+  <header>
+    <h1>Game of Mouse Simulator</h1>
+    <p>Human strategy simulator for testing defence against the Mouse.</p>
+  </header>
+
+  <main>
+
+    <section class="panel">
+      <h2>Simulation Controls</h2>
+
+      <label for="strategy">Strategy</label>
+      <select id="strategy">
+        <option>Orchestrator</option>
+        <option>Superman</option>
+        <option>Circular Movement</option>
+        <option>Pairs</option>
+        <option>Zoning</option>
+        <option>Self-Organization</option>
+      </select>
+
+      <label for="chairs">Number of Chairs</label>
+      <input id="chairs" type="number" value="20" min="4" max="100">
+
+      <label for="mouseSpeed">Mouse Speed</label>
+      <input id="mouseSpeed" type="number" value="1" step="0.1">
+
+      <label for="playerSpeed">Player Speed</label>
+      <input id="playerSpeed" type="number" value="2.5" step="0.1">
+
+      <button id="startButton">Start Simulation</button>
+
+      <div class="status">
+        <strong>Status:</strong>
+        <div id="statusText">Ready</div>
+      </div>
+    </section>
+
+    <section class="arena" id="arena">
+    </section>
+
+  </main>
+
 </body>
 </html>
