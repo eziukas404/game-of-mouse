@@ -4,290 +4,690 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Game of Mouse Simulator</title>
-
   <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #111827;
-      color: #f9fafb;
+    :root{
+      --bg:#0f172a;--panel:#1e293b;--panel2:#111827;--line:#334155;--text:#f8fafc;
+      --muted:#cbd5e1;--arena:#f8fafc;--chair:#2563eb;--empty:#f59e0b;--mouse:#dc2626;
+      --runner:#16a34a;--move:#7c3aed;--danger:#ef4444;
     }
-
-    header {
-      padding: 20px;
-      background: #1f2937;
-      border-bottom: 1px solid #374151;
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    header{padding:18px 22px;background:var(--panel);border-bottom:1px solid var(--line)}
+    header h1{margin:0 0 6px;font-size:28px}
+    header p{margin:0;color:var(--muted)}
+    main{display:grid;grid-template-columns:320px minmax(0,1fr);gap:18px;padding:18px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+    .panel h2,.panel h3{margin-top:0}
+    label{display:block;margin-top:10px;margin-bottom:4px;font-size:14px}
+    select,input,button{
+      width:100%;padding:9px 10px;border-radius:8px;border:1px solid #475569;font-size:14px
     }
-
-    main {
-      display: grid;
-      grid-template-columns: 280px 1fr;
-      gap: 20px;
-      padding: 20px;
+    select,input{background:#fff;color:#111827}
+    button{cursor:pointer;font-weight:700}
+    .primary{background:#fff;color:#111827}
+    .secondary{background:#334155;color:#fff}
+    .danger{background:#7f1d1d;color:#fff}
+    .button-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+    .full{grid-column:1/-1}
+    .status{margin-top:14px;padding:12px;background:var(--panel2);border-radius:8px;font-size:14px;line-height:1.45}
+    .mini{font-size:12px;color:var(--muted)}
+    .arena-wrap{min-width:0}
+    .arena{
+      position:relative;min-height:640px;background:var(--arena);border-radius:12px;overflow:hidden;
+      border:1px solid #d1d5db
     }
-
-    .panel {
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 12px;
-      padding: 16px;
+    .chair{
+      position:absolute;width:34px;height:34px;transform:translate(-50%,-50%);
+      border-radius:8px;border:3px solid #334155;background:var(--chair);
+      display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;user-select:none;
+      z-index:2
     }
-
-    .arena {
-      min-height: 600px;
-      background: #f3f4f6;
-      border-radius: 12px;
-      position: relative;
-      overflow: hidden;
+    .chair.empty{background:var(--empty);border-color:#b45309}
+    .chair.target{outline:4px solid rgba(220,38,38,.28);outline-offset:3px}
+    .chair.super{border-color:#166534;box-shadow:0 0 0 3px rgba(22,163,74,.22)}
+    .chair.moving-from{background:var(--move);border-color:#5b21b6}
+    .player-dot{
+      width:9px;height:9px;border-radius:50%;background:#fff;display:block
     }
-
-    label {
-      display: block;
-      margin-top: 12px;
-      margin-bottom: 4px;
+    .mouse{
+      position:absolute;width:42px;height:42px;border-radius:50%;background:var(--mouse);
+      transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;
+      font-size:22px;box-shadow:0 0 0 3px rgba(255,255,255,.7);z-index:6;user-select:none
     }
-
-    select,
-    input,
-    button {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 10px;
-      margin-bottom: 8px;
-      border-radius: 8px;
-      border: 1px solid #4b5563;
+    .moving-player{
+      position:absolute;width:24px;height:24px;border-radius:50%;background:var(--runner);
+      transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;
+      color:#fff;font-size:11px;font-weight:700;z-index:5;border:2px solid #14532d
     }
-
-    button {
-      cursor: pointer;
-      font-weight: bold;
+    .zone-line{position:absolute;background:rgba(15,23,42,.12);z-index:1;pointer-events:none}
+    .zone-v{top:0;bottom:0;width:1px;left:50%}
+    .zone-h{left:0;right:0;height:1px;top:50%}
+    .topbar{
+      display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;margin-bottom:10px
     }
-
-    .status {
-      margin-top: 16px;
-      padding: 12px;
-      background: #111827;
-      border-radius: 8px;
-    }
-
-    .chair {
-      position: absolute;
-      width: 34px;
-      height: 34px;
-      background: #6b7280;
-      border: 3px solid #374151;
-      border-radius: 8px;
-      transform: translate(-50%, -50%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      user-select: none;
-    }
-
-    .chair.occupied {
-      background: #2563eb;
-    }
-
-    .chair.empty {
-      background: #f59e0b;
-      border-color: #b45309;
-    }
-
-    .mouse {
-      position: absolute;
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      background: #dc2626;
-      transform: translate(-50%, -50%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 22px;
-      box-shadow: 0 0 0 3px rgba(255,255,255,0.6);
-      user-select: none;
-    }
-
-    @media (max-width: 800px) {
-      main {
-        grid-template-columns: 1fr;
-      }
+    .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+    .metric .k{font-size:12px;color:var(--muted)}
+    .metric .v{font-size:20px;font-weight:800;margin-top:2px}
+    .results{margin-top:14px;overflow:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:7px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+    th:first-child,td:first-child{text-align:left}
+    details{margin-top:14px}
+    summary{cursor:pointer;font-weight:700}
+    .legend{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0;font-size:12px;color:#334155}
+    .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+    .lg-occ::before{background:var(--chair)} .lg-empty::before{background:var(--empty)}
+    .lg-super::before{background:var(--runner)} .lg-mouse::before{background:var(--mouse)}
+    @media(max-width:900px){
+      main{grid-template-columns:1fr}.arena{min-height:560px}.topbar{grid-template-columns:repeat(2,1fr)}
     }
   </style>
 </head>
-
 <body>
+<header>
+  <h1>Game of Mouse Simulator</h1>
+  <p>Human strategy simulator: one Mouse, one locked target, and a moving vacancy.</p>
+</header>
 
-  <header>
-    <h1>Game of Mouse Simulator</h1>
-    <p>Human strategy simulator for testing defence against the Mouse.</p>
-  </header>
+<main>
+  <aside class="panel">
+    <h2>Simulation Controls</h2>
 
-  <main>
+    <label for="strategy">Strategy</label>
+    <select id="strategy">
+      <option>Orchestrator</option>
+      <option selected>Superman</option>
+      <option>Circular Movement</option>
+      <option>Pairs</option>
+      <option>Zoning</option>
+      <option>Self-Organization</option>
+    </select>
 
-    <section class="panel">
-      <h2>Simulation Controls</h2>
+    <label for="chairs">Number of chairs</label>
+    <input id="chairs" type="number" value="20" min="6" max="60">
 
-      <label for="strategy">Strategy</label>
-      <select id="strategy">
-        <option>Orchestrator</option>
-        <option>Superman</option>
-        <option>Circular Movement</option>
-        <option>Pairs</option>
-        <option>Zoning</option>
-        <option>Self-Organization</option>
-      </select>
+    <label for="mouseSpeed">Mouse speed (room units/s)</label>
+    <input id="mouseSpeed" type="number" value="1.0" min="0.1" max="10" step="0.1">
 
-      <label for="chairs">Number of Chairs</label>
-      <input id="chairs" type="number" value="20" min="4" max="100">
+    <label for="playerSpeed">Player speed (× Mouse)</label>
+    <input id="playerSpeed" type="number" value="2.5" min="1.1" max="10" step="0.1">
 
-      <label for="mouseSpeed">Mouse Speed</label>
-      <input id="mouseSpeed" type="number" value="1" step="0.1">
+    <label for="reaction">Human reaction delay (ms)</label>
+    <input id="reaction" type="number" value="350" min="0" max="3000" step="50">
 
-      <label for="playerSpeed">Player Speed</label>
-      <input id="playerSpeed" type="number" value="2.5" step="0.1">
+    <label for="communication">Communication delay (ms)</label>
+    <input id="communication" type="number" value="250" min="0" max="3000" step="50">
 
-      <button id="generateButton">Generate Room</button>
+    <label for="humanError">Human timing/error (%)</label>
+    <input id="humanError" type="number" value="5" min="0" max="50" step="1">
 
-      <div class="status">
-        <strong>Status:</strong>
-        <div id="statusText">Ready</div>
+    <label for="mouseSafety">Do-not-move radius near Mouse</label>
+    <input id="mouseSafety" type="number" value="90" min="0" max="250" step="10">
+
+    <label for="maxTime">Maximum run time (s)</label>
+    <input id="maxTime" type="number" value="180" min="10" max="1800" step="10">
+
+    <div class="button-grid">
+      <button class="secondary" id="generate">Generate Room</button>
+      <button class="primary" id="start">Start</button>
+      <button class="secondary" id="pause">Pause</button>
+      <button class="danger" id="reset">Reset</button>
+      <button class="primary full" id="batch">Compare All Strategies × 250</button>
+    </div>
+
+    <div class="status">
+      <strong>Status:</strong>
+      <div id="status">Ready.</div>
+      <div class="mini" id="detail"></div>
+    </div>
+
+    <details>
+      <summary>Model assumptions</summary>
+      <div class="mini" style="margin-top:8px;line-height:1.5">
+        Mouse locks onto the current empty chair and does not change target until a defender reaches it.
+        A defender's old chair becomes empty when they stand. The Mouse then targets that new vacancy if
+        the defender wins the race. Human delay, communication delay, timing error and the "do not move
+        near a passing Mouse" rule are included. Strategies are deterministic where your rules are deterministic,
+        and stochastic where humans self-organize.
       </div>
-    </section>
+    </details>
 
-    <section class="arena" id="arena"></section>
+    <div class="results" id="results"></div>
+  </aside>
 
-  </main>
+  <section class="arena-wrap">
+    <div class="topbar">
+      <div class="metric"><div class="k">Time</div><div class="v" id="mTime">0.0 s</div></div>
+      <div class="metric"><div class="k">Mouse distance</div><div class="v" id="mMouseDist">0</div></div>
+      <div class="metric"><div class="k">Defender moves</div><div class="v" id="mMoves">0</div></div>
+      <div class="metric"><div class="k">Current target</div><div class="v" id="mTarget">—</div></div>
+      <div class="metric"><div class="k">Outcome</div><div class="v" id="mOutcome">Ready</div></div>
+    </div>
 
-  <script>
-    const arena = document.getElementById('arena');
-    const chairsInput = document.getElementById('chairs');
-    const generateButton = document.getElementById('generateButton');
-    const statusText = document.getElementById('statusText');
+    <div class="arena" id="arena">
+      <div class="zone-line zone-v"></div>
+      <div class="zone-line zone-h"></div>
+    </div>
 
-    const CHAIR_MIN_DISTANCE = 58;
-    const MOUSE_MIN_DISTANCE = 70;
-    const PADDING = 50;
-    const MAX_ATTEMPTS = 5000;
+    <div class="legend">
+      <span class="lg-occ">Occupied</span>
+      <span class="lg-empty">Empty / target</span>
+      <span class="lg-super">Moving defender / Superman pair</span>
+      <span class="lg-mouse">Mouse</span>
+    </div>
+  </section>
+</main>
 
-    function randomBetween(min, max) {
-      return Math.random() * (max - min) + min;
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const arena = $('arena');
+  const controls = {
+    strategy:$('strategy'), chairs:$('chairs'), mouseSpeed:$('mouseSpeed'), playerSpeed:$('playerSpeed'),
+    reaction:$('reaction'), communication:$('communication'), humanError:$('humanError'),
+    mouseSafety:$('mouseSafety'), maxTime:$('maxTime')
+  };
+  const ui = {
+    status:$('status'), detail:$('detail'), time:$('mTime'), mouseDist:$('mMouseDist'),
+    moves:$('mMoves'), target:$('mTarget'), outcome:$('mOutcome'), results:$('results')
+  };
+
+  const CHAIR_MIN = 58;
+  const PADDING = 48;
+  const FPS_DT_CAP = 0.04;
+
+  let baseRoom = null;
+  let state = null;
+  let raf = null;
+  let paused = false;
+  let lastTs = null;
+
+  function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+  function rand(a,b){ return Math.random()*(b-a)+a; }
+  function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+  function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  function inputNum(el, fallback, min, max){
+    const v = Number(el.value);
+    const n = Number.isFinite(v) ? clamp(v,min,max) : fallback;
+    el.value = n;
+    return n;
+  }
+  function cfg(){
+    return {
+      strategy:controls.strategy.value,
+      chairs:Math.round(inputNum(controls.chairs,20,6,60)),
+      mouseSpeed:inputNum(controls.mouseSpeed,1,0.1,10),
+      playerMult:inputNum(controls.playerSpeed,2.5,1.1,10),
+      reaction:inputNum(controls.reaction,350,0,3000)/1000,
+      communication:inputNum(controls.communication,250,0,3000)/1000,
+      error:inputNum(controls.humanError,5,0,50)/100,
+      safety:inputNum(controls.mouseSafety,90,0,250),
+      maxTime:inputNum(controls.maxTime,180,10,1800)
+    };
+  }
+
+  function samplePosition(existing,w,h,minD){
+    for(let i=0;i<7000;i++){
+      const p={x:rand(PADDING,w-PADDING),y:rand(PADDING,h-PADDING)};
+      if(existing.every(q=>dist(p,q)>=minD)) return p;
     }
+    return null;
+  }
 
-    function distance(a, b) {
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      return Math.sqrt(dx * dx + dy * dy);
+  function farthestPair(chairs){
+    let best=[0,1], d=-1;
+    for(let i=0;i<chairs.length;i++) for(let j=i+1;j<chairs.length;j++){
+      const x=dist(chairs[i],chairs[j]);
+      if(x>d){ d=x; best=[i,j]; }
     }
+    return best;
+  }
 
-    function findValidPosition(existingPositions, width, height, minDistance) {
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const candidate = {
-          x: randomBetween(PADDING, width - PADDING),
-          y: randomBetween(PADDING, height - PADDING)
-        };
-
-        const valid = existingPositions.every(
-          position => distance(candidate, position) >= minDistance
-        );
-
-        if (valid) {
-          return candidate;
-        }
+  function generateRoom(){
+    stopAnimation();
+    const c=cfg();
+    const r=arena.getBoundingClientRect();
+    const w=Math.max(500,r.width), h=Math.max(480,r.height);
+    const positions=[];
+    for(let i=0;i<c.chairs;i++){
+      const p=samplePosition(positions,w,h,CHAIR_MIN);
+      if(!p){
+        ui.status.textContent='Could not place all chairs. Reduce chair count.';
+        return;
       }
+      positions.push(p);
+    }
 
+    const pair=farthestPair(positions);
+    let empty=Math.floor(Math.random()*c.chairs);
+    if(c.strategy==='Superman') empty=pair[0];
+
+    const players=[];
+    let pid=0;
+    for(let i=0;i<c.chairs;i++){
+      if(i===empty) continue;
+      players.push({id:pid++,chair:i,pair:null});
+    }
+    for(let i=0;i+1<players.length;i+=2){
+      players[i].pair=players[i+1].id;
+      players[i+1].pair=players[i].id;
+    }
+
+    let mouse=null;
+    for(let k=0;k<2000;k++){
+      const p={x:rand(PADDING,w-PADDING),y:rand(PADDING,h-PADDING)};
+      if(positions.every(q=>dist(p,q)>70)){ mouse=p; break; }
+    }
+    if(!mouse) mouse={x:w/2,y:h/2};
+
+    baseRoom={w,h,chairs:positions.map((p,i)=>({id:i,x:p.x,y:p.y})),players,empty,mouse,superPair:pair};
+    resetState();
+    ui.status.textContent='Room generated.';
+    ui.detail.textContent=c.strategy==='Superman'
+      ? `Superman chairs: ${pair[0]+1} ↔ ${pair[1]+1}`
+      : '';
+  }
+
+  function resetState(){
+    stopAnimation();
+    if(!baseRoom) return;
+    const c=cfg();
+    const room=clone(baseRoom);
+
+    if(c.strategy==='Superman'){
+      const [a,b]=room.superPair;
+      room.empty=a;
+      const superPlayer=room.players.find(p=>p.chair===b) || room.players[0];
+      room.supermanId=superPlayer.id;
+      // Ensure the Superman is seated at B.
+      const occupantB=room.players.find(p=>p.chair===b);
+      if(!occupantB){
+        const old=superPlayer.chair;
+        const other=room.players.find(p=>p.chair===b);
+        superPlayer.chair=b;
+        if(other) other.chair=old;
+      }
+    }
+
+    state={
+      c, room, time:0, running:false, done:false, outcome:'Ready',
+      mouse:{x:room.mouse.x,y:room.mouse.y}, mouseDistance:0,
+      target:room.empty, moves:0, activeMove:null, planAt:0,
+      pendingChoice:null, lastVacatedBy:null, circularOrder:null,
+      pairTriggerPlayer:null, fatigue:{}, eventLog:[]
+    };
+    for(const p of room.players) state.fatigue[p.id]=0;
+    buildCircularOrder();
+    render();
+  }
+
+  function buildCircularOrder(){
+    if(!state) return;
+    const cx=state.room.w/2, cy=state.room.h/2;
+    state.circularOrder=state.room.chairs
+      .map(ch=>({id:ch.id,a:Math.atan2(ch.y-cy,ch.x-cx)}))
+      .sort((a,b)=>a.a-b.a).map(x=>x.id);
+  }
+
+  function occupantOf(chairId){
+    return state.room.players.find(p=>p.chair===chairId) || null;
+  }
+  function playerById(id){ return state.room.players.find(p=>p.id===id) || null; }
+  function chair(id){ return state.room.chairs[id]; }
+  function mouseTimeToTarget(){
+    return dist(state.mouse,chair(state.target)) / state.c.mouseSpeed;
+  }
+  function playerSpeed(player){
+    const f=state.fatigue[player.id]||0;
+    return state.c.mouseSpeed*state.c.playerMult*Math.max(0.60,1-f*0.025);
+  }
+  function travelTime(player,targetChair){
+    return dist(chair(player.chair),chair(targetChair))/playerSpeed(player);
+  }
+  function safeToStand(player){
+    return dist(chair(player.chair),state.mouse)>=state.c.safety;
+  }
+  function errorJitter(){
+    const e=state.c.error;
+    return 1 + rand(-e,e);
+  }
+  function strategyDelay(){
+    let d=state.c.reaction;
+    if(state.c.strategy==='Orchestrator') d+=state.c.communication;
+    if(state.c.strategy==='Self-Organization') d+=state.c.communication*0.5;
+    return Math.max(0,d*errorJitter());
+  }
+
+  function eligiblePlayers(){
+    return state.room.players.filter(p=>p.chair!==state.target && safeToStand(p));
+  }
+
+  function zoneOf(ch){
+    const x=ch.x<state.room.w/2?0:1, y=ch.y<state.room.h/2?0:1;
+    return y*2+x;
+  }
+  function oppositeZone(z){ return [3,2,1,0][z]; }
+
+  function chooseDefender(){
+    const target=chair(state.target);
+    const eligible=eligiblePlayers();
+    if(!eligible.length) return null;
+
+    if(state.c.strategy==='Superman'){
+      const sp=playerById(state.room.supermanId);
+      if(!sp || !safeToStand(sp)) return null;
+      const [a,b]=state.room.superPair;
+      if(state.target!==a && state.target!==b) return null;
+      if(sp.chair!==a && sp.chair!==b) return null;
+      if(sp.chair===state.target) return null;
+
+      // Human Superman waits until the Mouse is committed enough, while keeping a safety margin.
+      const mt=mouseTimeToTarget();
+      const pt=travelTime(sp,state.target);
+      const margin=0.18 + state.c.reaction;
+      if(mt > pt + margin){
+        // Wait for a late but safe launch.
+        if(mt > pt + margin + 0.35) return {wait:true};
+        return sp;
+      }
+      return sp; // last chance: go now
+    }
+
+    if(state.c.strategy==='Circular Movement'){
+      const order=state.circularOrder;
+      const idx=order.indexOf(state.target);
+      for(let k=1;k<order.length;k++){
+        const source=order[(idx-k+order.length)%order.length];
+        const p=occupantOf(source);
+        if(p && safeToStand(p)) return p;
+      }
       return null;
     }
 
-    function generateRoom() {
-      arena.innerHTML = '';
-
-      const chairCount = Math.max(
-        4,
-        Math.min(100, parseInt(chairsInput.value, 10) || 20)
-      );
-
-      chairsInput.value = chairCount;
-
-      const rect = arena.getBoundingClientRect();
-      const width = rect.width;
-      const height = rect.height;
-
-      const chairPositions = [];
-      const emptyChairIndex = Math.floor(Math.random() * chairCount);
-
-      for (let i = 0; i < chairCount; i++) {
-        const position = findValidPosition(
-          chairPositions,
-          width,
-          height,
-          CHAIR_MIN_DISTANCE
-        );
-
-        if (!position) {
-          statusText.textContent =
-            'Could not place all chairs safely. Try fewer chairs or regenerate.';
-          break;
+    if(state.c.strategy==='Pairs'){
+      if(state.lastVacatedBy!==null){
+        const prev=playerById(state.lastVacatedBy);
+        if(prev && prev.pair!==null){
+          const partner=playerById(prev.pair);
+          if(partner && partner.chair!==state.target && safeToStand(partner)) return partner;
         }
-
-        chairPositions.push(position);
-
-        const chair = document.createElement('div');
-
-        chair.className =
-          i === emptyChairIndex
-            ? 'chair empty'
-            : 'chair occupied';
-
-        chair.textContent =
-          i === emptyChairIndex
-            ? '○'
-            : '●';
-
-        chair.style.left = position.x + 'px';
-        chair.style.top = position.y + 'px';
-
-        chair.dataset.index = i;
-        chair.dataset.x = position.x;
-        chair.dataset.y = position.y;
-
-        arena.appendChild(chair);
       }
-
-      const mousePosition = findValidPosition(
-        chairPositions,
-        width,
-        height,
-        MOUSE_MIN_DISTANCE
-      );
-
-      if (!mousePosition) {
-        statusText.textContent =
-          'Could not place the Mouse safely. Regenerate the room.';
-        return;
-      }
-
-      const mouse = document.createElement('div');
-      mouse.className = 'mouse';
-      mouse.textContent = '🐭';
-
-      mouse.style.left = mousePosition.x + 'px';
-      mouse.style.top = mousePosition.y + 'px';
-
-      mouse.dataset.x = mousePosition.x;
-      mouse.dataset.y = mousePosition.y;
-
-      arena.appendChild(mouse);
-
-      statusText.textContent =
-        'Room generated with safe spacing.';
+      // Initial move: prefer a player whose paired partner is far from the target.
+      return eligible.sort((a,b)=>{
+        const ap=a.pair!==null?playerById(a.pair):null;
+        const bp=b.pair!==null?playerById(b.pair):null;
+        const sa=(ap?dist(chair(ap.chair),target):0)-dist(chair(a.chair),target)*0.2;
+        const sb=(bp?dist(chair(bp.chair),target):0)-dist(chair(b.chair),target)*0.2;
+        return sb-sa;
+      })[0];
     }
 
-    generateButton.addEventListener('click', generateRoom);
+    if(state.c.strategy==='Zoning'){
+      const z=zoneOf(target), oz=oppositeZone(z);
+      const inOpp=eligible.filter(p=>zoneOf(chair(p.chair))===oz);
+      const pool=inOpp.length?inOpp:eligible;
+      // Choose far away, but still capable of winning the race.
+      const mt=mouseTimeToTarget();
+      const feasible=pool.filter(p=>travelTime(p,state.target)+0.10<mt);
+      const use=feasible.length?feasible:pool;
+      return use.sort((a,b)=>dist(chair(b.chair),target)-dist(chair(a.chair),target))[0];
+    }
 
+    if(state.c.strategy==='Self-Organization'){
+      // Independent humans: several may volunteer; conflict adds delay and may select a poor volunteer.
+      const volunteers=eligible.filter(p=>{
+        const urgency=1-clamp(mouseTimeToTarget()/5,0,1);
+        const pVolunteer=0.18+0.35*urgency;
+        return Math.random()<pVolunteer;
+      });
+      const pool=volunteers.length?volunteers:eligible;
+      state.extraConflictDelay = Math.max(0,pool.length-1)*0.12;
+      return pool[Math.floor(Math.random()*pool.length)];
+    }
+
+    // Orchestrator: maximize next Mouse journey while requiring a plausible winning race.
+    const mt=mouseTimeToTarget();
+    const feasible=eligible.filter(p=>travelTime(p,state.target)+state.c.communication+0.08<mt);
+    const pool=feasible.length?feasible:eligible;
+    return pool.sort((a,b)=>{
+      const sa=dist(chair(a.chair),target)+0.65*dist(chair(a.chair),state.mouse)-0.25*travelTime(a,state.target)*state.c.mouseSpeed;
+      const sb=dist(chair(b.chair),target)+0.65*dist(chair(b.chair),state.mouse)-0.25*travelTime(b,state.target)*state.c.mouseSpeed;
+      return sb-sa;
+    })[0];
+  }
+
+  function maybePlanMove(){
+    if(state.done || state.activeMove || state.pendingChoice) return;
+    const pick=chooseDefender();
+    if(pick && pick.wait) return;
+    if(!pick) return;
+    const delay=strategyDelay()+(state.extraConflictDelay||0);
+    state.extraConflictDelay=0;
+    state.pendingChoice={playerId:pick.id,at:state.time+delay};
+  }
+
+  function startMove(player){
+    if(!player || player.chair===state.target || !safeToStand(player)) return;
+    const origin=player.chair;
+    const target=state.target;
+    const from=chair(origin), to=chair(target);
+    player.chair=null; // Butt is off the chair: origin is now empty.
+    state.activeMove={
+      playerId:player.id,origin,target,
+      x:from.x,y:from.y,
+      total:dist(from,to),traveled:0
+    };
+    state.pendingChoice=null;
+  }
+
+  function completeMove(){
+    const m=state.activeMove;
+    const p=playerById(m.playerId);
+    if(!p) return;
+    p.chair=m.target;
+    state.fatigue[p.id]=(state.fatigue[p.id]||0)+1;
+    state.moves++;
+    state.lastVacatedBy=p.id;
+    state.target=m.origin;
+    state.activeMove=null;
+    state.pendingChoice=null;
+    state.planAt=state.time;
+  }
+
+  function fail(reason){
+    state.done=true; state.running=false; state.outcome=reason;
+    ui.status.textContent=reason;
+    stopAnimation(false);
+    render();
+  }
+  function survive(){
+    state.done=true; state.running=false; state.outcome='Survived time limit';
+    ui.status.textContent='Survived the configured time limit.';
+    stopAnimation(false);
+    render();
+  }
+
+  function tick(dt){
+    if(!state || !state.running || state.done) return;
+    state.time+=dt;
+    if(state.time>=state.c.maxTime){ survive(); return; }
+
+    if(state.pendingChoice && state.time>=state.pendingChoice.at){
+      const p=playerById(state.pendingChoice.playerId);
+      startMove(p);
+    }
+
+    maybePlanMove();
+
+    // Move Mouse toward its locked target.
+    const t=chair(state.target);
+    const d=dist(state.mouse,t);
+    const step=state.c.mouseSpeed*dt;
+    if(step>=d){
+      state.mouseDistance+=d;
+      state.mouse.x=t.x; state.mouse.y=t.y;
+      fail('Mouse reached the empty chair');
+      return;
+    } else {
+      state.mouse.x += (t.x-state.mouse.x)/d*step;
+      state.mouse.y += (t.y-state.mouse.y)/d*step;
+      state.mouseDistance+=step;
+    }
+
+    // Move defender toward the locked target they committed to.
+    if(state.activeMove){
+      const m=state.activeMove, p=playerById(m.playerId);
+      const to=chair(m.target);
+      const d2=Math.hypot(to.x-m.x,to.y-m.y);
+      const ps=playerSpeed(p)*dt;
+      if(ps>=d2){
+        m.x=to.x; m.y=to.y;
+        completeMove();
+      } else {
+        m.x += (to.x-m.x)/d2*ps;
+        m.y += (to.y-m.y)/d2*ps;
+        m.traveled+=ps;
+      }
+    }
+  }
+
+  function step(ts){
+    if(!state || !state.running || paused || state.done) return;
+    if(lastTs===null) lastTs=ts;
+    const dt=Math.min(FPS_DT_CAP,(ts-lastTs)/1000);
+    lastTs=ts;
+    tick(dt);
+    render();
+    if(state.running && !state.done) raf=requestAnimationFrame(step);
+  }
+
+  function start(){
+    if(!baseRoom) generateRoom();
+    if(!state || state.done) resetState();
+    state.c=cfg();
+    state.running=true; paused=false; state.outcome='Running';
+    ui.status.textContent='Simulation running.';
+    lastTs=null;
+    stopAnimation(false);
+    raf=requestAnimationFrame(step);
+  }
+  function pause(){
+    if(!state || state.done) return;
+    paused=!paused;
+    ui.status.textContent=paused?'Paused.':'Simulation running.';
+    if(!paused){ lastTs=null; raf=requestAnimationFrame(step); }
+  }
+  function stopAnimation(clear=true){
+    if(raf!==null){ cancelAnimationFrame(raf); raf=null; }
+    lastTs=null;
+    if(clear && state) state.running=false;
+  }
+
+  function render(){
+    if(!state) return;
+    const staticLines=[...arena.querySelectorAll('.zone-line')];
+    arena.innerHTML='';
+    staticLines.forEach(x=>arena.appendChild(x));
+
+    const occupied=new Map();
+    for(const p of state.room.players) if(p.chair!==null) occupied.set(p.chair,p);
+
+    for(const ch of state.room.chairs){
+      const el=document.createElement('div');
+      const occ=occupied.get(ch.id);
+      const isTarget=ch.id===state.target;
+      el.className='chair '+(occ?'occupied':'empty')+(isTarget?' target':'');
+      if(state.c.strategy==='Superman' && state.room.superPair.includes(ch.id)) el.classList.add('super');
+      el.style.left=ch.x+'px'; el.style.top=ch.y+'px';
+      el.title=`Chair ${ch.id+1}`;
+      if(occ){
+        const dot=document.createElement('span'); dot.className='player-dot'; el.appendChild(dot);
+      } else el.textContent='○';
+      arena.appendChild(el);
+    }
+
+    if(state.activeMove){
+      const m=state.activeMove;
+      const p=document.createElement('div');
+      p.className='moving-player'; p.style.left=m.x+'px'; p.style.top=m.y+'px';
+      p.textContent=m.playerId+1; p.title='Moving defender';
+      arena.appendChild(p);
+    }
+
+    const mouse=document.createElement('div');
+    mouse.className='mouse'; mouse.textContent='🐭';
+    mouse.style.left=state.mouse.x+'px'; mouse.style.top=state.mouse.y+'px';
+    arena.appendChild(mouse);
+
+    ui.time.textContent=state.time.toFixed(1)+' s';
+    ui.mouseDist.textContent=state.mouseDistance.toFixed(0);
+    ui.moves.textContent=state.moves;
+    ui.target.textContent=(state.target+1).toString();
+    ui.outcome.textContent=state.outcome;
+  }
+
+  // Fast non-visual simulation for Monte Carlo comparison.
+  function simulateFast(strategy, roomTemplate, c){
+    const savedState=state, savedBase=baseRoom;
+    baseRoom=clone(roomTemplate);
+    controls.strategy.value=strategy;
+    resetState();
+    state.c={...c,strategy};
+    let guard=0;
+    const dt=0.025;
+    while(!state.done && state.time<c.maxTime && guard<100000){
+      tick(dt); guard++;
+    }
+    const out={time:state.time,moves:state.moves,mouseDistance:state.mouseDistance,win:state.outcome==='Survived time limit'};
+    state=savedState; baseRoom=savedBase;
+    return out;
+  }
+
+  async function batchCompare(){
+    stopAnimation();
+    ui.results.innerHTML='<div class="mini">Running 1,500 simulations…</div>';
+    await new Promise(r=>setTimeout(r,20));
+    const originalStrategy=controls.strategy.value;
+    const c=cfg();
+    const strategies=['Orchestrator','Superman','Circular Movement','Pairs','Zoning','Self-Organization'];
+    const rows=[];
+    for(const s of strategies){
+      const vals=[];
+      for(let i=0;i<250;i++){
+        controls.strategy.value=s;
+        generateRoom();
+        const room=clone(baseRoom);
+        vals.push(simulateFast(s,room,{...c,strategy:s}));
+      }
+      vals.sort((a,b)=>a.time-b.time);
+      const avg=vals.reduce((x,v)=>x+v.time,0)/vals.length;
+      const med=vals[Math.floor(vals.length/2)].time;
+      const p90=vals[Math.floor(vals.length*0.9)].time;
+      const wins=vals.filter(v=>v.win).length;
+      rows.push({s,avg,med,p90,wins});
+    }
+    controls.strategy.value=originalStrategy;
     generateRoom();
-  </script>
 
+    rows.sort((a,b)=>b.med-a.med);
+    ui.results.innerHTML=
+      '<h3>Monte Carlo comparison</h3>'+
+      '<table><thead><tr><th>Strategy</th><th>Avg</th><th>Median</th><th>P90</th><th>Survived</th></tr></thead><tbody>'+
+      rows.map(r=>`<tr><td>${r.s}</td><td>${r.avg.toFixed(1)}s</td><td>${r.med.toFixed(1)}s</td><td>${r.p90.toFixed(1)}s</td><td>${r.wins}/250</td></tr>`).join('')+
+      '</tbody></table><div class="mini" style="margin-top:8px">Results depend on the current speed, delay, error and safety settings.</div>';
+    ui.status.textContent='Comparison complete.';
+  }
+
+  $('generate').addEventListener('click',generateRoom);
+  $('start').addEventListener('click',start);
+  $('pause').addEventListener('click',pause);
+  $('reset').addEventListener('click',resetState);
+  $('batch').addEventListener('click',batchCompare);
+  controls.strategy.addEventListener('change',generateRoom);
+  window.addEventListener('resize',()=>{ if(!state?.running) generateRoom(); });
+
+  generateRoom();
+})();
+</script>
 </body>
 </html>
