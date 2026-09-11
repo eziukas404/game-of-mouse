@@ -86,7 +86,7 @@
 <body>
 <header>
   <h1>Game of Mouse Simulator</h1>
-  <p>Human strategy simulator: one Mouse, one locked target, and a moving vacancy.</p>
+  <p>Human strategy simulator: realistic walking/running speeds, human delay, one locked target, and a moving vacancy.</p>
 </header>
 
 <main>
@@ -106,20 +106,20 @@
     <label for="chairs">Number of chairs</label>
     <input id="chairs" type="number" value="20" min="6" max="60">
 
-    <label for="mouseSpeed">Mouse speed (room units/s)</label>
-    <input id="mouseSpeed" type="number" value="1.0" min="0.1" max="10" step="0.1">
+    <label for="mouseSpeed">Mouse walking speed (m/s)</label>
+    <input id="mouseSpeed" type="number" value="1.4" min="0.5" max="3.0" step="0.1">
 
     <label for="playerSpeed">Player speed (× Mouse)</label>
-    <input id="playerSpeed" type="number" value="2.5" min="1.1" max="10" step="0.1">
+    <input id="playerSpeed" type="number" value="2.0" min="1.1" max="4.0" step="0.1">
 
-    <label for="reaction">Human reaction delay (ms)</label>
-    <input id="reaction" type="number" value="350" min="0" max="3000" step="50">
+    <label for="reaction">Human reaction baseline (ms)</label>
+    <input id="reaction" type="number" value="450" min="100" max="2000" step="50">
 
-    <label for="communication">Communication delay (ms)</label>
-    <input id="communication" type="number" value="250" min="0" max="3000" step="50">
+    <label for="communication">Orchestrator command overhead (ms)</label>
+    <input id="communication" type="number" value="700" min="0" max="2500" step="50">
 
     <label for="humanError">Human timing/error (%)</label>
-    <input id="humanError" type="number" value="5" min="0" max="50" step="1">
+    <input id="humanError" type="number" value="8" min="0" max="50" step="1">
 
     <label for="mouseSafety">Do-not-move radius near Mouse</label>
     <input id="mouseSafety" type="number" value="90" min="0" max="250" step="10">
@@ -141,16 +141,16 @@
       <div class="mini" id="detail"></div>
     </div>
 
-    <details>
-      <summary>Model assumptions</summary>
-      <div class="mini" style="margin-top:8px;line-height:1.5">
-        Mouse locks onto the current empty chair and does not change target until a defender reaches it.
-        A defender's old chair becomes empty when they stand. The Mouse then targets that new vacancy if
-        the defender wins the race. Human delay, communication delay, timing error and the "do not move
-        near a passing Mouse" rule are included. Strategies are deterministic where your rules are deterministic,
-        and stochastic where humans self-organize.
+    <div class="status" style="margin-top:14px">
+      <strong>Model assumptions</strong>
+      <div class="mini" style="margin-top:6px;line-height:1.5">
+        Mouse locks onto the current empty chair and keeps walking only to that chair.
+        When a defender reaches it first, the defender's old chair becomes the new target.
+        Mouse speed is based on normal walking pace. Player speed is a multiplier of Mouse speed.
+        Human reaction is strategy-dependent: pre-planned movement is faster; Orchestrator adds verbal command overhead.
+        Players sitting inside the Mouse safety radius are not allowed to stand.
       </div>
-    </details>
+    </div>
 
     <div class="results" id="results"></div>
   </aside>
@@ -194,6 +194,7 @@
 
   const CHAIR_MIN = 58;
   const PADDING = 48;
+  const PX_PER_METER = 60;
   const FPS_DT_CAP = 0.04;
 
   let baseRoom = null;
@@ -216,11 +217,11 @@
     return {
       strategy:controls.strategy.value,
       chairs:Math.round(inputNum(controls.chairs,20,6,60)),
-      mouseSpeed:inputNum(controls.mouseSpeed,1,0.1,10),
-      playerMult:inputNum(controls.playerSpeed,2.5,1.1,10),
-      reaction:inputNum(controls.reaction,350,0,3000)/1000,
-      communication:inputNum(controls.communication,250,0,3000)/1000,
-      error:inputNum(controls.humanError,5,0,50)/100,
+      mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
+      playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
+      reaction:inputNum(controls.reaction,450,100,2000)/1000,
+      communication:inputNum(controls.communication,700,0,2500)/1000,
+      error:inputNum(controls.humanError,8,0,50)/100,
       safety:inputNum(controls.mouseSafety,90,0,250),
       maxTime:inputNum(controls.maxTime,180,10,1800)
     };
@@ -335,11 +336,11 @@
   function playerById(id){ return state.room.players.find(p=>p.id===id) || null; }
   function chair(id){ return state.room.chairs[id]; }
   function mouseTimeToTarget(){
-    return dist(state.mouse,chair(state.target)) / state.c.mouseSpeed;
+    return dist(state.mouse,chair(state.target)) / (state.c.mouseSpeed * PX_PER_METER);
   }
   function playerSpeed(player){
     const f=state.fatigue[player.id]||0;
-    return state.c.mouseSpeed*state.c.playerMult*Math.max(0.60,1-f*0.025);
+    return state.c.mouseSpeed*PX_PER_METER*state.c.playerMult*Math.max(0.60,1-f*0.025);
   }
   function travelTime(player,targetChair){
     return dist(chair(player.chair),chair(targetChair))/playerSpeed(player);
@@ -352,9 +353,14 @@
     return 1 + rand(-e,e);
   }
   function strategyDelay(){
+    // Real people react differently depending on how much thinking/communication is required.
     let d=state.c.reaction;
-    if(state.c.strategy==='Orchestrator') d+=state.c.communication;
-    if(state.c.strategy==='Self-Organization') d+=state.c.communication*0.5;
+    if(state.c.strategy==='Superman') d*=0.55;              // one prepared runner, no verbal command
+    else if(state.c.strategy==='Circular Movement') d*=0.75; // next move is predictable
+    else if(state.c.strategy==='Pairs') d*=0.90;             // fixed partner rule
+    else if(state.c.strategy==='Zoning') d*=1.00;             // identify zone + act
+    else if(state.c.strategy==='Self-Organization') d*=1.15;  // independent decision/hesitation
+    else if(state.c.strategy==='Orchestrator') d+=state.c.communication; // see, decide, call, hear, act
     return Math.max(0,d*errorJitter());
   }
 
@@ -450,8 +456,8 @@
     const feasible=eligible.filter(p=>travelTime(p,state.target)+state.c.communication+0.08<mt);
     const pool=feasible.length?feasible:eligible;
     return pool.sort((a,b)=>{
-      const sa=dist(chair(a.chair),target)+0.65*dist(chair(a.chair),state.mouse)-0.25*travelTime(a,state.target)*state.c.mouseSpeed;
-      const sb=dist(chair(b.chair),target)+0.65*dist(chair(b.chair),state.mouse)-0.25*travelTime(b,state.target)*state.c.mouseSpeed;
+      const sa=dist(chair(a.chair),target)+0.65*dist(chair(a.chair),state.mouse)-0.25*travelTime(a,state.target)*state.c.mouseSpeed*PX_PER_METER;
+      const sb=dist(chair(b.chair),target)+0.65*dist(chair(b.chair),state.mouse)-0.25*travelTime(b,state.target)*state.c.mouseSpeed*PX_PER_METER;
       return sb-sa;
     })[0];
   }
@@ -522,7 +528,7 @@
     // Move Mouse toward its locked target.
     const t=chair(state.target);
     const d=dist(state.mouse,t);
-    const step=state.c.mouseSpeed*dt;
+    const step=state.c.mouseSpeed*PX_PER_METER*dt;
     if(step>=d){
       state.mouseDistance+=d;
       state.mouse.x=t.x; state.mouse.y=t.y;
