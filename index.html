@@ -166,8 +166,38 @@
     const generateButton = document.getElementById('generateButton');
     const statusText = document.getElementById('statusText');
 
+    const CHAIR_MIN_DISTANCE = 58;
+    const MOUSE_MIN_DISTANCE = 70;
+    const PADDING = 50;
+    const MAX_ATTEMPTS = 5000;
+
     function randomBetween(min, max) {
       return Math.random() * (max - min) + min;
+    }
+
+    function distance(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function findValidPosition(existingPositions, width, height, minDistance) {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const candidate = {
+          x: randomBetween(PADDING, width - PADDING),
+          y: randomBetween(PADDING, height - PADDING)
+        };
+
+        const valid = existingPositions.every(
+          position => distance(candidate, position) >= minDistance
+        );
+
+        if (valid) {
+          return candidate;
+        }
+      }
+
+      return null;
     }
 
     function generateRoom() {
@@ -184,11 +214,25 @@
       const width = rect.width;
       const height = rect.height;
 
-      const padding = 45;
-
+      const chairPositions = [];
       const emptyChairIndex = Math.floor(Math.random() * chairCount);
 
       for (let i = 0; i < chairCount; i++) {
+        const position = findValidPosition(
+          chairPositions,
+          width,
+          height,
+          CHAIR_MIN_DISTANCE
+        );
+
+        if (!position) {
+          statusText.textContent =
+            'Could not place all chairs safely. Try fewer chairs or regenerate.';
+          break;
+        }
+
+        chairPositions.push(position);
+
         const chair = document.createElement('div');
 
         chair.className =
@@ -201,31 +245,43 @@
             ? '○'
             : '●';
 
-        chair.style.left =
-          randomBetween(padding, width - padding) + 'px';
-
-        chair.style.top =
-          randomBetween(padding, height - padding) + 'px';
+        chair.style.left = position.x + 'px';
+        chair.style.top = position.y + 'px';
 
         chair.dataset.index = i;
+        chair.dataset.x = position.x;
+        chair.dataset.y = position.y;
 
         arena.appendChild(chair);
+      }
+
+      const mousePosition = findValidPosition(
+        chairPositions,
+        width,
+        height,
+        MOUSE_MIN_DISTANCE
+      );
+
+      if (!mousePosition) {
+        statusText.textContent =
+          'Could not place the Mouse safely. Regenerate the room.';
+        return;
       }
 
       const mouse = document.createElement('div');
       mouse.className = 'mouse';
       mouse.textContent = '🐭';
 
-      mouse.style.left =
-        randomBetween(padding, width - padding) + 'px';
+      mouse.style.left = mousePosition.x + 'px';
+      mouse.style.top = mousePosition.y + 'px';
 
-      mouse.style.top =
-        randomBetween(padding, height - padding) + 'px';
+      mouse.dataset.x = mousePosition.x;
+      mouse.dataset.y = mousePosition.y;
 
       arena.appendChild(mouse);
 
       statusText.textContent =
-        'Room generated — Mouse has one target.';
+        'Room generated with safe spacing.';
     }
 
     generateButton.addEventListener('click', generateRoom);
