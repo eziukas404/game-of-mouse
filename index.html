@@ -724,8 +724,11 @@
       }
 
       if(!safeToStand(p)) continue;
-      if(p.lastDepartedChair===targetId && p.lastSeatedChair===p.chair) continue;
 
+      // A standing player cannot abort and sit back on the chair they just left.
+      // But once they have successfully sat on another chair, returning to an older chair later is allowed.
+      // This is already enforced by the state model: while moving, p.chair === null, so the player
+      // cannot be scheduled again until the current move is completed.
       const origin=p.chair;
       const from=chair(origin),to=chair(targetId);
       p.lastDepartedChair=origin;
