@@ -113,16 +113,19 @@
     <input id="playerSpeed" type="number" value="2.0" min="1.1" max="4.0" step="0.1">
 
     <label for="reaction">Strategy reaction / decision baseline (ms)</label>
-    <input id="reaction" type="number" value="400" min="150" max="1500" step="50">
+    <input id="reaction" type="number" value="250" min="100" max="1500" step="50">
 
     <label for="communication">Verbal / coordination overhead (ms)</label>
-    <input id="communication" type="number" value="700" min="200" max="2500" step="50">
+    <input id="communication" type="number" value="0" min="0" max="2500" step="50">
 
     <label for="humanError">Human timing/error (%)</label>
-    <input id="humanError" type="number" value="12" min="0" max="50" step="1">
+    <input id="humanError" type="number" value="6" min="0" max="50" step="1">
 
     <label for="mouseSafety">Do-not-move radius near Mouse</label>
     <input id="mouseSafety" type="number" value="90" min="0" max="250" step="10">
+
+    <label for="startDistance">Minimum initial Mouse-to-target distance (m)</label>
+    <input id="startDistance" type="number" value="4.0" min="1.0" max="12.0" step="0.5">
 
     <label for="maxTime">Maximum run time (s)</label>
     <input id="maxTime" type="number" value="180" min="10" max="1800" step="10">
@@ -148,9 +151,9 @@
         When a defender reaches it first, the defender's old chair becomes the new target.
         Mouse speed is based on normal walking pace. Player speed is a multiplier of Mouse speed.
         Human timing is strategy-dependent and the timing controls automatically change when you choose a strategy.
-        A prepared physical response can start in roughly 0.3–0.6 s, while choosing among several people takes longer.
-        The Orchestrator adds decision time plus verbal/comprehension overhead, so a normal command usually starts movement
-        after roughly 1.5–2.2 s rather than under one second. Default human timing variation is 12%.
+        The defaults are calibrated toward observed group play rather than isolated laboratory reaction tests:
+        Superman is fastest because the runner is pre-planned; Orchestrator includes explicit verbal overhead.
+        Default timing variation is 6%. The Mouse is spawned at least the configured distance from the initial empty chair.
         Chairs are physical obstacles: the Mouse and moving defenders route around them instead of passing through them.
         A player who stands must complete a move to another chair and cannot simply sit back on the chair they just left.
         Players sitting inside the Mouse safety radius are not allowed to stand.
@@ -190,7 +193,7 @@
   const controls = {
     strategy:$('strategy'), chairs:$('chairs'), mouseSpeed:$('mouseSpeed'), playerSpeed:$('playerSpeed'),
     reaction:$('reaction'), communication:$('communication'), humanError:$('humanError'),
-    mouseSafety:$('mouseSafety'), maxTime:$('maxTime')
+    mouseSafety:$('mouseSafety'), startDistance:$('startDistance'), maxTime:$('maxTime')
   };
   const ui = {
     status:$('status'), detail:$('detail'), time:$('mTime'), mouseDist:$('mMouseDist'),
@@ -198,12 +201,13 @@
   };
 
   const TIMING_PRESETS = {
-    'Superman':          { reaction: 400, communication: 0 },
-    'Circular Movement': { reaction: 450, communication: 0 },
-    'Pairs':             { reaction: 500, communication: 100 },
-    'Zoning':            { reaction: 600, communication: 150 },
-    'Self-Organization': { reaction: 700, communication: 0 },
-    'Orchestrator':      { reaction: 650, communication: 800 }
+    // Tuned toward observed real-game results rather than laboratory reaction times.
+    'Superman':          { reaction: 250, communication: 0 },
+    'Circular Movement': { reaction: 300, communication: 0 },
+    'Pairs':             { reaction: 350, communication: 75 },
+    'Zoning':            { reaction: 400, communication: 100 },
+    'Self-Organization': { reaction: 450, communication: 0 },
+    'Orchestrator':      { reaction: 450, communication: 500 }
   };
 
   function applyTimingPreset(strategy){
@@ -322,10 +326,11 @@
       chairs:Math.round(inputNum(controls.chairs,20,6,60)),
       mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
       playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
-      reaction:inputNum(controls.reaction,400,150,1500)/1000,
+      reaction:inputNum(controls.reaction,250,100,1500)/1000,
       communication:inputNum(controls.communication,0,0,2500)/1000,
-      error:inputNum(controls.humanError,12,0,50)/100,
+      error:inputNum(controls.humanError,6,0,50)/100,
       safety:inputNum(controls.mouseSafety,90,0,250),
+      startDistanceM:inputNum(controls.startDistance,4.0,1.0,12.0),
       maxTime:inputNum(controls.maxTime,180,10,1800)
     };
   }
@@ -378,11 +383,21 @@
     }
 
     let mouse=null;
-    for(let k=0;k<2000;k++){
+    const targetPos = positions[empty];
+    const minStartPx = c.startDistanceM * PX_PER_METER;
+
+    // The real game does not begin with the Mouse already on top of the vacancy.
+    // Prefer a spawn far from the initial target and also clear of all chairs.
+    let bestCandidate=null, bestDistance=-1;
+    for(let k=0;k<4000;k++){
       const p={x:rand(PADDING,w-PADDING),y:rand(PADDING,h-PADDING)};
-      if(positions.every(q=>dist(p,q)>70)){ mouse=p; break; }
+      if(!positions.every(q=>dist(p,q)>70)) continue;
+
+      const d0=dist(p,targetPos);
+      if(d0>bestDistance){ bestDistance=d0; bestCandidate=p; }
+      if(d0>=minStartPx){ mouse=p; break; }
     }
-    if(!mouse) mouse={x:w/2,y:h/2};
+    mouse = mouse || bestCandidate || {x:w/2,y:h/2};
 
     baseRoom={w,h,chairs:positions.map((p,i)=>({id:i,x:p.x,y:p.y})),players,empty,mouse,superPair:pair};
     resetState();
@@ -459,15 +474,14 @@
     return 1 + rand(-e,e);
   }
   function strategyDelay(){
-    // The input is a prepared movement reaction, not the whole decision.
-    // Additional cognitive time is added when a person must identify who should act.
+    // Presets already represent the practical "notice/decide/start moving" delay for each strategy.
+    // Do not add a second large cognitive penalty here; only add explicit coordination overhead.
     let d=state.c.reaction;
-    if(state.c.strategy==='Superman') d*=0.85;                 // prepared single runner
-    else if(state.c.strategy==='Circular Movement') d*=1.05;   // known next person
-    else if(state.c.strategy==='Pairs') d=d*1.15+0.15;         // identify paired responsibility
-    else if(state.c.strategy==='Zoning') d=d+0.55;             // identify zone + suitable runner
-    else if(state.c.strategy==='Self-Organization') d=d+0.75;  // perceive + decide independently
-    else if(state.c.strategy==='Orchestrator') d=d+0.55+state.c.communication; // choose + call + understand
+    if(state.c.strategy==='Orchestrator' ||
+       state.c.strategy==='Pairs' ||
+       state.c.strategy==='Zoning'){
+      d += state.c.communication;
+    }
     return Math.max(0,d*errorJitter());
   }
 
