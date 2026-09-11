@@ -156,8 +156,10 @@
         empty chair. Once a player stands, they must sit on a different chair before they can return to the one
         they left. People sitting inside the Mouse safety radius do not stand.
         Human speeds vary by person, repeated running adds mild fatigue, the Orchestrator makes an imperfect
-        visual decision rather than an exact calculation, and Superman launches from a visually estimated
-        halfway point rather than perfect ETA math. Monte Carlo comparisons use the same room layouts for all strategies.
+        visual decision rather than an exact calculation, and Superman makes the GO decision slightly before
+        the visual halfway point so that, after human reaction delay, movement begins around halfway.
+        The Mouse is also a physical human obstacle: defenders must pass around it and can be blocked by it;
+        they are never allowed to pass through or touch the Mouse. Monte Carlo comparisons use the same room layouts for all strategies.
       </div>
     </div>
 
@@ -228,6 +230,8 @@
   const PX_PER_METER = 60;
   const CHAIR_OBSTACLE_RADIUS = 27;
   const PATH_CLEARANCE = 8;
+  const PLAYER_MOUSE_CLEARANCE = 38; // center-to-center: bodies must not touch/pass through each other
+  const MOUSE_AVOID_LOOKAHEAD = 42;
   const SIM_DT = 0.01;
 
   let baseRoom = null;
@@ -291,6 +295,74 @@
     if(vv===0) return dist(p,a);
     const t=clamp((wx*vx+wy*vy)/vv,0,1);
     return Math.hypot(p.x-(a.x+t*vx),p.y-(a.y+t*vy));
+  }
+
+  function segmentApproachesMouse(a,b,clearance=PLAYER_MOUSE_CLEARANCE){
+    const vx=b.x-a.x, vy=b.y-a.y;
+    const vv=vx*vx+vy*vy;
+    if(vv===0) return dist(a,state.mouse)<clearance;
+    const wx=state.mouse.x-a.x, wy=state.mouse.y-a.y;
+    const t=clamp((wx*vx+wy*vy)/vv,0,1);
+    if(t<=0 || t>=1) return false;
+    const closest={x:a.x+t*vx,y:a.y+t*vy};
+    return dist(closest,state.mouse)<clearance;
+  }
+
+  function pointClearOfChairs(p,ignoreIds=[]){
+    return state.room.chairs.every(ch =>
+      ignoreIds.includes(ch.id) ||
+      dist(p,ch) >= CHAIR_OBSTACLE_RADIUS + PATH_CLEARANCE
+    );
+  }
+
+  function chooseMouseAvoidanceStep(m,desiredStep,wp){
+    const current={x:m.x,y:m.y};
+    const toMouse={x:current.x-state.mouse.x,y:current.y-state.mouse.y};
+    let r=Math.hypot(toMouse.x,toMouse.y);
+
+    // If centers nearly coincide, derive a stable outward direction from desired travel.
+    let rx,ry;
+    if(r<0.001){
+      const dx=wp.x-current.x,dy=wp.y-current.y;
+      const dl=Math.hypot(dx,dy)||1;
+      rx=-dy/dl; ry=dx/dl; r=0;
+    }else{
+      rx=toMouse.x/r; ry=toMouse.y/r;
+    }
+
+    const tx1=-ry, ty1=rx;
+    const tx2=ry,  ty2=-rx;
+
+    // Add an outward component so the runner goes around the Mouse rather than orbiting into it.
+    const outward = r < PLAYER_MOUSE_CLEARANCE + 8 ? 0.80 : 0.38;
+
+    function candidate(tx,ty){
+      let vx=tx + rx*outward;
+      let vy=ty + ry*outward;
+      const vl=Math.hypot(vx,vy)||1;
+      vx/=vl; vy/=vl;
+
+      const c={
+        x:clamp(current.x+vx*desiredStep,PADDING,state.room.w-PADDING),
+        y:clamp(current.y+vy*desiredStep,PADDING,state.room.h-PADDING)
+      };
+
+      const mouseGap=dist(c,state.mouse);
+      const chairOK=pointClearOfChairs(c,[m.origin,m.target]);
+      const progress=dist(c,wp);
+      const safe=mouseGap>=PLAYER_MOUSE_CLEARANCE-0.5 && chairOK;
+
+      return {c,safe,progress,mouseGap};
+    }
+
+    const a=candidate(tx1,ty1), b=candidate(tx2,ty2);
+    const valid=[a,b].filter(x=>x.safe).sort((x,y)=>x.progress-y.progress);
+
+    if(valid.length) return valid[0].c;
+
+    // If neither side is currently passable, the Mouse/chairs physically block the runner.
+    // The defender waits rather than clipping through a body.
+    return null;
   }
 
   function segmentBlocker(a,b,ignoreIds=[]){
@@ -507,7 +579,10 @@
     state.mouseRouteTarget=null;
     const len=pathLength(state.mouse,chair(id),[id]);
     state.targetStartDistance=Math.max(1,len);
-    state.superTrigger=clamp(0.45+rand(-0.07,0.07),0.32,0.58);
+    // Skilled Superman decides slightly before the visual halfway point; after reaction delay,
+    // actual body movement normally begins around halfway. This avoids making a 2× runner
+    // mathematically late before obstacles/crossing are even considered.
+    state.superTrigger=clamp(0.40+rand(-0.04,0.04),0.34,0.46);
     // People who have not yet stood can update to the new situation.
     state.pendingStarts=[];
   }
@@ -541,7 +616,7 @@
       mouse:{x:room.mouse.x,y:room.mouse.y}, mouseDistance:0,
       target:room.empty, targetVersion:0, plannedVersion:-1, targetStartDistance:1,
       superTrigger:0.45, superPair:[], supermanId:null,
-      moves:0, conflicts:0, retargets:0,
+      moves:0, conflicts:0, retargets:0, mouseBlockTime:0,
       activeMoves:[], pendingStarts:[], fatigue:{}, lastVacatedBy:null,
       circularOrder:[], mouseRoute:[], mouseRouteTarget:null
     };
@@ -740,7 +815,7 @@
         route:buildPath(from,to,[origin,targetId]),routeIndex:0,
         startedAt:state.time,
         conflictCheckAt:state.time+rand(0.20,0.48)*(1+state.c.error),
-        pausedUntil:0,retargets:0,reason:ps.reason
+        pausedUntil:0,retargets:0,mouseBlockedTime:0,reason:ps.reason
       });
     }
   }
@@ -834,6 +909,7 @@
     p.lastSeatedChair=m.target;
     state.fatigue[p.id]=(state.fatigue[p.id]||0)+1;
     state.moves++;
+    state.mouseBlockTime += (m.mouseBlockedTime||0);
     state.lastVacatedBy=p.id;
 
     const closedLockedTarget=(m.target===state.target);
@@ -848,6 +924,7 @@
 
   function advanceMoves(dt){
     const copy=state.activeMoves.slice();
+
     for(const m of copy){
       if(!state.activeMoves.includes(m)) continue;
       if(state.time<m.pausedUntil) continue;
@@ -861,15 +938,55 @@
 
       while(remaining>0 && m.routeIndex<m.route.length){
         const wp=m.route[m.routeIndex];
-        const d=dist({x:m.x,y:m.y},wp);
-        if(d<0.001){ m.routeIndex++; continue; }
-        if(remaining>=d){
-          m.x=wp.x;m.y=wp.y;remaining-=d;m.routeIndex++;
-        }else{
-          m.x+=(wp.x-m.x)/d*remaining;
-          m.y+=(wp.y-m.y)/d*remaining;
-          remaining=0;
+        const current={x:m.x,y:m.y};
+        const d=dist(current,wp);
+
+        if(d<0.001){
+          m.routeIndex++;
+          continue;
         }
+
+        const step=Math.min(remaining,d);
+        const ux=(wp.x-m.x)/d, uy=(wp.y-m.y)/d;
+        const proposed={x:m.x+ux*step,y:m.y+uy*step};
+
+        // The Mouse is a moving human obstacle. A defender may go around,
+        // but may never pass through/touch the Mouse.
+        const nearMouse =
+          dist(current,state.mouse) < PLAYER_MOUSE_CLEARANCE + MOUSE_AVOID_LOOKAHEAD ||
+          segmentApproachesMouse(current,proposed,PLAYER_MOUSE_CLEARANCE);
+
+        if(nearMouse && (
+          dist(proposed,state.mouse) < PLAYER_MOUSE_CLEARANCE ||
+          segmentApproachesMouse(current,proposed,PLAYER_MOUSE_CLEARANCE)
+        )){
+          const detour=chooseMouseAvoidanceStep(m,step,wp);
+
+          if(!detour){
+            // Physically blocked this tick. This is intentionally allowed to cost the game,
+            // matching the real Superman failure mode when the Mouse blocks the corridor.
+            m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+            break;
+          }
+
+          m.x=detour.x;
+          m.y=detour.y;
+          remaining-=step;
+          m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+          continue;
+        }
+
+        // Final hard safety check: never let centers cross the no-touch boundary.
+        if(dist(proposed,state.mouse)<PLAYER_MOUSE_CLEARANCE){
+          m.mouseBlockedTime=(m.mouseBlockedTime||0)+dt;
+          break;
+        }
+
+        m.x=proposed.x;
+        m.y=proposed.y;
+        remaining-=step;
+
+        if(step>=d-0.001) m.routeIndex++;
       }
 
       if(m.routeIndex>=m.route.length) completeMove(m);
@@ -1038,7 +1155,9 @@
 
     const out={
       time:state.time,moves:state.moves,conflicts:state.conflicts,
-      retargets:state.retargets,mouseDistance:state.mouseDistance/PX_PER_METER,
+      retargets:state.retargets,
+      mouseBlockTime:state.mouseBlockTime + state.activeMoves.reduce((s,m)=>s+(m.mouseBlockedTime||0),0),
+      mouseDistance:state.mouseDistance/PX_PER_METER,
       win:state.outcome==='Survived time limit'
     };
     state=savedState;
