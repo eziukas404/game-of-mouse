@@ -59,11 +59,12 @@
       transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;
       color:#fff;font-size:11px;font-weight:700;z-index:5;border:2px solid #14532d
     }
+    .moving-player.confused{background:#f97316;border-color:#9a3412}
     .zone-line{position:absolute;background:rgba(15,23,42,.12);z-index:1;pointer-events:none}
     .zone-v{top:0;bottom:0;width:1px;left:50%}
     .zone-h{left:0;right:0;height:1px;top:50%}
     .topbar{
-      display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;margin-bottom:10px
+      display:grid;grid-template-columns:repeat(6,minmax(88px,1fr));gap:8px;margin-bottom:10px
     }
     .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
     .metric .k{font-size:12px;color:var(--muted)}
@@ -113,7 +114,7 @@
     <input id="playerSpeed" type="number" value="2.0" min="1.1" max="4.0" step="0.1">
 
     <label for="reaction">Strategy reaction / decision baseline (ms)</label>
-    <input id="reaction" type="number" value="250" min="100" max="1500" step="50">
+    <input id="reaction" type="number" value="250" min="100" max="2000" step="50">
 
     <label for="communication">Verbal / coordination overhead (ms)</label>
     <input id="communication" type="number" value="0" min="0" max="2500" step="50">
@@ -147,16 +148,16 @@
     <div class="status" style="margin-top:14px">
       <strong>Model assumptions</strong>
       <div class="mini" style="margin-top:6px;line-height:1.5">
-        Mouse locks onto the current empty chair and keeps walking only to that chair.
-        When a defender reaches it first, the defender's old chair becomes the new target.
-        Mouse speed is based on normal walking pace. Player speed is a multiplier of Mouse speed.
-        Human timing is strategy-dependent and the timing controls automatically change when you choose a strategy.
-        The defaults are calibrated toward observed group play rather than isolated laboratory reaction tests:
-        Superman is fastest because the runner is pre-planned; Orchestrator includes explicit verbal overhead.
-        Default timing variation is 6%. The Mouse is spawned at least the configured distance from the initial empty chair.
-        Chairs are physical obstacles: the Mouse and moving defenders route around them instead of passing through them.
-        A player who stands must complete a move to another chair and cannot simply sit back on the chair they just left.
-        Players sitting inside the Mouse safety radius are not allowed to stand.
+        Mouse locks onto one empty chair and keeps walking to it until that chair is occupied.
+        If several defenders stand, several chairs can become empty. Once the locked target closes,
+        the Mouse chooses the nearest currently empty chair. Chairs are physical obstacles for everyone.
+        Superman and Orchestrator allow only one intended mover. Circular, Pairs, Zoning and Self-Organization
+        can produce simultaneous responders; they may notice the conflict late, hesitate and retarget to another
+        empty chair. Once a player stands, they must sit on a different chair before they can return to the one
+        they left. People sitting inside the Mouse safety radius do not stand.
+        Human speeds vary by person, repeated running adds mild fatigue, the Orchestrator makes an imperfect
+        visual decision rather than an exact calculation, and Superman launches from a visually estimated
+        halfway point rather than perfect ETA math. Monte Carlo comparisons use the same room layouts for all strategies.
       </div>
     </div>
 
@@ -168,6 +169,7 @@
       <div class="metric"><div class="k">Time</div><div class="v" id="mTime">0.0 s</div></div>
       <div class="metric"><div class="k">Mouse distance</div><div class="v" id="mMouseDist">0</div></div>
       <div class="metric"><div class="k">Defender moves</div><div class="v" id="mMoves">0</div></div>
+      <div class="metric"><div class="k">Conflicts</div><div class="v" id="mConflicts">0</div></div>
       <div class="metric"><div class="k">Current target</div><div class="v" id="mTarget">—</div></div>
       <div class="metric"><div class="k">Outcome</div><div class="v" id="mOutcome">Ready</div></div>
     </div>
@@ -190,43 +192,43 @@
 (() => {
   const $ = id => document.getElementById(id);
   const arena = $('arena');
+
   const controls = {
     strategy:$('strategy'), chairs:$('chairs'), mouseSpeed:$('mouseSpeed'), playerSpeed:$('playerSpeed'),
     reaction:$('reaction'), communication:$('communication'), humanError:$('humanError'),
     mouseSafety:$('mouseSafety'), startDistance:$('startDistance'), maxTime:$('maxTime')
   };
+
   const ui = {
     status:$('status'), detail:$('detail'), time:$('mTime'), mouseDist:$('mMouseDist'),
-    moves:$('mMoves'), target:$('mTarget'), outcome:$('mOutcome'), results:$('results')
+    moves:$('mMoves'), conflicts:$('mConflicts'), target:$('mTarget'),
+    outcome:$('mOutcome'), results:$('results')
   };
 
   const TIMING_PRESETS = {
-    // Tuned toward observed real-game results rather than laboratory reaction times.
-    'Superman':          { reaction: 250, communication: 0 },
-    'Circular Movement': { reaction: 300, communication: 0 },
-    'Pairs':             { reaction: 350, communication: 75 },
-    'Zoning':            { reaction: 400, communication: 100 },
-    'Self-Organization': { reaction: 450, communication: 0 },
-    'Orchestrator':      { reaction: 450, communication: 500 }
+    // These are practical "notice/decide/start" baselines, not laboratory reaction tests.
+    'Superman':          { reaction:250, communication:0 },
+    'Circular Movement': { reaction:300, communication:0 },
+    'Pairs':             { reaction:350, communication:75 },
+    'Zoning':            { reaction:400, communication:100 },
+    'Self-Organization': { reaction:450, communication:0 },
+    // A real orchestrator must scan, choose, call a person, and be understood.
+    'Orchestrator':      { reaction:700, communication:600 }
   };
 
-  function applyTimingPreset(strategy){
-    const preset = TIMING_PRESETS[strategy];
-    if(!preset) return;
-    controls.reaction.value = preset.reaction;
-    controls.communication.value = preset.communication;
-    controls.communication.disabled = strategy !== 'Orchestrator' && strategy !== 'Pairs' && strategy !== 'Zoning';
-    controls.communication.title = controls.communication.disabled
-      ? 'This strategy does not normally require verbal coordination.'
-      : 'Default coordination overhead for this strategy.';
-  }
+  const CONFLICT_BASE = {
+    'Circular Movement':0.14,
+    'Pairs':0.28,
+    'Zoning':0.30,
+    'Self-Organization':0.48
+  };
 
   const CHAIR_MIN = 58;
   const PADDING = 48;
   const PX_PER_METER = 60;
   const CHAIR_OBSTACLE_RADIUS = 27;
   const PATH_CLEARANCE = 8;
-  const FPS_DT_CAP = 0.04;
+  const SIM_DT = 0.01;
 
   let baseRoom = null;
   let state = null;
@@ -237,10 +239,54 @@
   function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
   function rand(a,b){ return Math.random()*(b-a)+a; }
   function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+  function clone(o){ return JSON.parse(JSON.stringify(o)); }
+
+  function inputNum(el,fallback,min,max){
+    const v=Number(el.value);
+    const n=Number.isFinite(v)?clamp(v,min,max):fallback;
+    el.value=n;
+    return n;
+  }
+
+  function applyTimingPreset(strategy){
+    const p=TIMING_PRESETS[strategy];
+    if(!p) return;
+    controls.reaction.value=p.reaction;
+    controls.communication.value=p.communication;
+    const usesCoord=['Orchestrator','Pairs','Zoning'].includes(strategy);
+    controls.communication.disabled=!usesCoord;
+    controls.communication.title=usesCoord
+      ? 'Default coordination overhead for this strategy.'
+      : 'This strategy normally has no verbal coordination overhead.';
+  }
+
+  function cfg(){
+    return {
+      strategy:controls.strategy.value,
+      chairs:Math.round(inputNum(controls.chairs,20,6,60)),
+      mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
+      playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
+      reaction:inputNum(controls.reaction,250,100,2000)/1000,
+      communication:inputNum(controls.communication,0,0,2500)/1000,
+      error:inputNum(controls.humanError,6,0,50)/100,
+      safety:inputNum(controls.mouseSafety,90,0,250),
+      startDistanceM:inputNum(controls.startDistance,4.0,1.0,12.0),
+      maxTime:inputNum(controls.maxTime,180,10,1800)
+    };
+  }
+
+  function configForStrategy(base,strategy){
+    const p=TIMING_PRESETS[strategy];
+    return {
+      ...base,
+      strategy,
+      reaction:p.reaction/1000,
+      communication:p.communication/1000
+    };
+  }
 
   function pointSegmentDistance(p,a,b){
-    const vx=b.x-a.x, vy=b.y-a.y;
-    const wx=p.x-a.x, wy=p.y-a.y;
+    const vx=b.x-a.x, vy=b.y-a.y, wx=p.x-a.x, wy=p.y-a.y;
     const vv=vx*vx+vy*vy;
     if(vv===0) return dist(p,a);
     const t=clamp((wx*vx+wy*vy)/vv,0,1);
@@ -248,53 +294,43 @@
   }
 
   function segmentBlocker(a,b,ignoreIds=[]){
-    let best=null, bestAlong=Infinity;
-    const vx=b.x-a.x, vy=b.y-a.y;
-    const len=Math.hypot(vx,vy) || 1;
+    let best=null,bestAlong=Infinity;
+    const vx=b.x-a.x,vy=b.y-a.y,len=Math.hypot(vx,vy)||1;
     for(const ch of state.room.chairs){
       if(ignoreIds.includes(ch.id)) continue;
       const d=pointSegmentDistance(ch,a,b);
-      if(d < CHAIR_OBSTACLE_RADIUS + PATH_CLEARANCE){
+      if(d<CHAIR_OBSTACLE_RADIUS+PATH_CLEARANCE){
         const along=((ch.x-a.x)*vx+(ch.y-a.y)*vy)/len;
-        if(along>0 && along<len && along<bestAlong){
-          best=ch; bestAlong=along;
-        }
+        if(along>0 && along<len && along<bestAlong){ best=ch; bestAlong=along; }
       }
     }
     return best;
   }
 
   function detourPoint(a,b,obstacle,side){
-    const vx=b.x-a.x, vy=b.y-a.y;
-    const len=Math.hypot(vx,vy) || 1;
-    const nx=-vy/len, ny=vx/len;
-    const offset=CHAIR_OBSTACLE_RADIUS + PATH_CLEARANCE + 10;
+    const vx=b.x-a.x,vy=b.y-a.y,len=Math.hypot(vx,vy)||1;
+    const nx=-vy/len,ny=vx/len;
+    const offset=CHAIR_OBSTACLE_RADIUS+PATH_CLEARANCE+10;
     return {
-      x:clamp(obstacle.x + nx*offset*side, PADDING, state.room.w-PADDING),
-      y:clamp(obstacle.y + ny*offset*side, PADDING, state.room.h-PADDING)
+      x:clamp(obstacle.x+nx*offset*side,PADDING,state.room.w-PADDING),
+      y:clamp(obstacle.y+ny*offset*side,PADDING,state.room.h-PADDING)
     };
   }
 
   function buildPath(start,end,ignoreIds=[]){
-    // Lightweight visibility/detour planner. It inserts waypoints around the first blocking chair,
-    // choosing the shorter valid side, then repeats until all segments are clear.
     let points=[{x:start.x,y:start.y},{x:end.x,y:end.y}];
     for(let pass=0;pass<14;pass++){
       let changed=false;
       const next=[points[0]];
       for(let i=0;i<points.length-1;i++){
-        const a=points[i], b=points[i+1];
+        const a=points[i],b=points[i+1];
         const block=segmentBlocker(a,b,ignoreIds);
         if(!block){ next.push(b); continue; }
-
-        const p1=detourPoint(a,b,block,1);
-        const p2=detourPoint(a,b,block,-1);
-
-        const score = p => {
+        const p1=detourPoint(a,b,block,1),p2=detourPoint(a,b,block,-1);
+        const score=p=>{
           const bad1=segmentBlocker(a,p,ignoreIds.concat(block.id));
           const bad2=segmentBlocker(p,b,ignoreIds.concat(block.id));
-          const penalty=(bad1?10000:0)+(bad2?10000:0);
-          return dist(a,p)+dist(p,b)+penalty;
+          return dist(a,p)+dist(p,b)+(bad1?10000:0)+(bad2?10000:0);
         };
         next.push(score(p1)<=score(p2)?p1:p2);
         next.push(b);
@@ -308,31 +344,9 @@
 
   function pathLength(start,end,ignoreIds=[]){
     const pts=buildPath(start,end,ignoreIds);
-    let total=0, prev=start;
+    let total=0,prev=start;
     for(const p of pts){ total+=dist(prev,p); prev=p; }
     return total;
-  }
-
-  function clone(o){ return JSON.parse(JSON.stringify(o)); }
-  function inputNum(el, fallback, min, max){
-    const v = Number(el.value);
-    const n = Number.isFinite(v) ? clamp(v,min,max) : fallback;
-    el.value = n;
-    return n;
-  }
-  function cfg(){
-    return {
-      strategy:controls.strategy.value,
-      chairs:Math.round(inputNum(controls.chairs,20,6,60)),
-      mouseSpeed:inputNum(controls.mouseSpeed,1.4,0.5,3.0),
-      playerMult:inputNum(controls.playerSpeed,2.0,1.1,4.0),
-      reaction:inputNum(controls.reaction,250,100,1500)/1000,
-      communication:inputNum(controls.communication,0,0,2500)/1000,
-      error:inputNum(controls.humanError,6,0,50)/100,
-      safety:inputNum(controls.mouseSafety,90,0,250),
-      startDistanceM:inputNum(controls.startDistance,4.0,1.0,12.0),
-      maxTime:inputNum(controls.maxTime,180,10,1800)
-    };
   }
 
   function samplePosition(existing,w,h,minD){
@@ -343,309 +357,485 @@
     return null;
   }
 
-  function farthestPair(chairs){
-    let best=[0,1], d=-1;
-    for(let i=0;i<chairs.length;i++) for(let j=i+1;j<chairs.length;j++){
-      const x=dist(chairs[i],chairs[j]);
-      if(x>d){ d=x; best=[i,j]; }
-    }
-    return best;
-  }
-
-  function generateRoom(){
-    stopAnimation();
-    const c=cfg();
-    const r=arena.getBoundingClientRect();
-    const w=Math.max(500,r.width), h=Math.max(480,r.height);
+  function createRoom(c,w,h){
     const positions=[];
     for(let i=0;i<c.chairs;i++){
       const p=samplePosition(positions,w,h,CHAIR_MIN);
-      if(!p){
-        ui.status.textContent='Could not place all chairs. Reduce chair count.';
-        return;
-      }
+      if(!p) return null;
       positions.push(p);
     }
 
-    const pair=farthestPair(positions);
-    let empty=Math.floor(Math.random()*c.chairs);
-    if(c.strategy==='Superman') empty=pair[0];
-
+    const empty=Math.floor(Math.random()*c.chairs);
     const players=[];
     let pid=0;
     for(let i=0;i<c.chairs;i++){
       if(i===empty) continue;
-      players.push({id:pid++,chair:i,pair:null,lastDepartedChair:null,lastSeatedChair:i});
-    }
-    for(let i=0;i+1<players.length;i+=2){
-      players[i].pair=players[i+1].id;
-      players[i+1].pair=players[i].id;
+      players.push({
+        id:pid++, chair:i, pair:null,
+        speedFactor:rand(0.92,1.08),
+        lastDepartedChair:null, lastSeatedChair:i
+      });
     }
 
-    let mouse=null;
-    const targetPos = positions[empty];
-    const minStartPx = c.startDistanceM * PX_PER_METER;
+    // Fixed pairs for the whole game. Shuffle identities first so pairing is not geometrically artificial.
+    const ids=players.map(p=>p.id).sort(()=>Math.random()-0.5);
+    for(let i=0;i+1<ids.length;i+=2){
+      const a=players.find(p=>p.id===ids[i]), b=players.find(p=>p.id===ids[i+1]);
+      a.pair=b.id; b.pair=a.id;
+    }
 
-    // The real game does not begin with the Mouse already on top of the vacancy.
-    // Prefer a spawn far from the initial target and also clear of all chairs.
-    let bestCandidate=null, bestDistance=-1;
-    for(let k=0;k<4000;k++){
+    const minStartPx=c.startDistanceM*PX_PER_METER;
+    let mouse=null,best=null,bestD=-1;
+    for(let k=0;k<5000;k++){
       const p={x:rand(PADDING,w-PADDING),y:rand(PADDING,h-PADDING)};
       if(!positions.every(q=>dist(p,q)>70)) continue;
-
-      const d0=dist(p,targetPos);
-      if(d0>bestDistance){ bestDistance=d0; bestCandidate=p; }
-      if(d0>=minStartPx){ mouse=p; break; }
+      const d=dist(p,positions[empty]);
+      if(d>bestD){ bestD=d; best=p; }
+      if(d>=minStartPx){ mouse=p; break; }
     }
-    mouse = mouse || bestCandidate || {x:w/2,y:h/2};
+    mouse=mouse||best||{x:w/2,y:h/2};
 
-    baseRoom={w,h,chairs:positions.map((p,i)=>({id:i,x:p.x,y:p.y})),players,empty,mouse,superPair:pair};
-    resetState();
-    ui.status.textContent='Room generated.';
-    ui.detail.textContent=c.strategy==='Superman'
-      ? `Superman chairs: ${pair[0]+1} ↔ ${pair[1]+1}`
-      : '';
+    return {
+      w,h,
+      chairs:positions.map((p,i)=>({id:i,x:p.x,y:p.y})),
+      players,empty,mouse
+    };
   }
 
-  function resetState(){
-    stopAnimation();
-    if(!baseRoom) return;
-    const c=cfg();
-    const room=clone(baseRoom);
+  function chair(id){ return state.room.chairs[id]; }
+  function playerById(id){ return state.room.players.find(p=>p.id===id)||null; }
+  function occupantOf(chairId){ return state.room.players.find(p=>p.chair===chairId)||null; }
+  function activeForPlayer(id){ return state.activeMoves.find(m=>m.playerId===id)||null; }
 
-    if(c.strategy==='Superman'){
-      const [a,b]=room.superPair;
-      room.empty=a;
-      const superPlayer=room.players.find(p=>p.chair===b) || room.players[0];
-      room.supermanId=superPlayer.id;
-      // Ensure the Superman is seated at B.
-      const occupantB=room.players.find(p=>p.chair===b);
-      if(!occupantB){
-        const old=superPlayer.chair;
-        const other=room.players.find(p=>p.chair===b);
-        superPlayer.chair=b;
-        if(other) other.chair=old;
-      }
+  function emptyChairIds(){
+    const occupied=new Set(state.room.players.filter(p=>p.chair!==null).map(p=>p.chair));
+    return state.room.chairs.filter(ch=>!occupied.has(ch.id)).map(ch=>ch.id);
+  }
+
+  function farthestChairFrom(id){
+    const from=chair(id);
+    let best=null,bestD=-1;
+    for(const ch of state.room.chairs){
+      if(ch.id===id) continue;
+      const d=dist(from,ch);
+      if(d>bestD){ bestD=d; best=ch.id; }
     }
-
-    state={
-      c, room, time:0, running:false, done:false, outcome:'Ready',
-      mouse:{x:room.mouse.x,y:room.mouse.y}, mouseDistance:0,
-      target:room.empty, moves:0, activeMove:null, planAt:0,
-      pendingChoice:null, lastVacatedBy:null, circularOrder:null,
-      pairTriggerPlayer:null, fatigue:{}, eventLog:[],
-      mouseRoute:[], mouseRouteTarget:null
-    };
-    for(const p of room.players) state.fatigue[p.id]=0;
-    buildCircularOrder();
-    render();
+    return best;
   }
 
   function buildCircularOrder(){
-    if(!state) return;
-    const cx=state.room.w/2, cy=state.room.h/2;
+    const cx=state.room.w/2,cy=state.room.h/2;
     state.circularOrder=state.room.chairs
       .map(ch=>({id:ch.id,a:Math.atan2(ch.y-cy,ch.x-cx)}))
       .sort((a,b)=>a.a-b.a).map(x=>x.id);
   }
 
-  function occupantOf(chairId){
-    return state.room.players.find(p=>p.chair===chairId) || null;
-  }
-  function playerById(id){ return state.room.players.find(p=>p.id===id) || null; }
-  function chair(id){ return state.room.chairs[id]; }
-  function mouseTimeToTarget(){
-    const target=chair(state.target);
-    return pathLength(state.mouse,target,[state.target]) / (state.c.mouseSpeed * PX_PER_METER);
-  }
   function playerSpeed(player){
     const f=state.fatigue[player.id]||0;
-    return state.c.mouseSpeed*PX_PER_METER*state.c.playerMult*Math.max(0.60,1-f*0.025);
+    return state.c.mouseSpeed*PX_PER_METER*state.c.playerMult*
+      player.speedFactor*Math.max(0.72,1-f*0.018);
   }
-  function travelTime(player,targetChair){
-    const origin=chair(player.chair), target=chair(targetChair);
-    return pathLength(origin,target,[player.chair,targetChair])/playerSpeed(player);
-  }
+
   function safeToStand(player){
-    return dist(chair(player.chair),state.mouse)>=state.c.safety;
-  }
-  function errorJitter(){
-    const e=state.c.error;
-    return 1 + rand(-e,e);
-  }
-  function strategyDelay(){
-    // Presets already represent the practical "notice/decide/start moving" delay for each strategy.
-    // Do not add a second large cognitive penalty here; only add explicit coordination overhead.
-    let d=state.c.reaction;
-    if(state.c.strategy==='Orchestrator' ||
-       state.c.strategy==='Pairs' ||
-       state.c.strategy==='Zoning'){
-      d += state.c.communication;
-    }
-    return Math.max(0,d*errorJitter());
+    return player.chair!==null && dist(chair(player.chair),state.mouse)>=state.c.safety;
   }
 
   function eligiblePlayers(){
-    return state.room.players.filter(p=>p.chair!==state.target && safeToStand(p));
+    const busy=new Set([
+      ...state.activeMoves.map(m=>m.playerId),
+      ...state.pendingStarts.map(p=>p.playerId)
+    ]);
+    return state.room.players.filter(p=>
+      p.chair!==null && p.chair!==state.target && !busy.has(p.id) && safeToStand(p)
+    );
+  }
+
+  function errorJitter(){
+    return 1+rand(-state.c.error,state.c.error);
+  }
+
+  function strategyDelay(extra=0){
+    return Math.max(0,(state.c.reaction+state.c.communication+extra)*errorJitter());
   }
 
   function zoneOf(ch){
-    const x=ch.x<state.room.w/2?0:1, y=ch.y<state.room.h/2?0:1;
+    const x=ch.x<state.room.w/2?0:1,y=ch.y<state.room.h/2?0:1;
     return y*2+x;
   }
   function oppositeZone(z){ return [3,2,1,0][z]; }
 
-  function chooseDefender(){
+  function setTarget(id){
+    state.target=id;
+    state.targetVersion++;
+    state.plannedVersion=-1;
+    state.mouseRoute=[];
+    state.mouseRouteTarget=null;
+    const len=pathLength(state.mouse,chair(id),[id]);
+    state.targetStartDistance=Math.max(1,len);
+    state.superTrigger=clamp(0.45+rand(-0.07,0.07),0.32,0.58);
+    // People who have not yet stood can update to the new situation.
+    state.pendingStarts=[];
+  }
+
+  function targetProgress(){
+    const remain=pathLength(state.mouse,chair(state.target),[state.target]);
+    return clamp(1-remain/state.targetStartDistance,0,1);
+  }
+
+  function setupSuperman(){
+    const a=state.room.empty;
+    const b=farthestChairFrom(a);
+    state.superPair=[a,b];
+
+    // The team deliberately assigns its quickest runner to the Superman role.
+    const fastest=state.room.players.slice().sort((x,y)=>y.speedFactor-x.speedFactor)[0];
+    const atB=occupantOf(b);
+    if(fastest && atB && fastest.id!==atB.id){
+      const old=fastest.chair;
+      fastest.chair=b;
+      atB.chair=old;
+      fastest.lastSeatedChair=b;
+      atB.lastSeatedChair=old;
+    }
+    state.supermanId=fastest?fastest.id:(atB?atB.id:null);
+  }
+
+  function initState(room,strategy,c,doRender=true){
+    state={
+      c:{...c,strategy}, room:clone(room), time:0, running:false, done:false, outcome:'Ready',
+      mouse:{x:room.mouse.x,y:room.mouse.y}, mouseDistance:0,
+      target:room.empty, targetVersion:0, plannedVersion:-1, targetStartDistance:1,
+      superTrigger:0.45, superPair:[], supermanId:null,
+      moves:0, conflicts:0, retargets:0,
+      activeMoves:[], pendingStarts:[], fatigue:{}, lastVacatedBy:null,
+      circularOrder:[], mouseRoute:[], mouseRouteTarget:null
+    };
+    for(const p of state.room.players) state.fatigue[p.id]=0;
+    buildCircularOrder();
+    if(strategy==='Superman') setupSuperman();
+    setTarget(state.room.empty);
+    if(doRender) render();
+  }
+
+  function generateRoom(){
+    stopAnimation();
+    const c=cfg(),r=arena.getBoundingClientRect();
+    const room=createRoom(c,Math.max(500,r.width),Math.max(480,r.height));
+    if(!room){
+      ui.status.textContent='Could not place all chairs. Reduce chair count.';
+      return;
+    }
+    baseRoom=room;
+    initState(baseRoom,c.strategy,c,true);
+    ui.status.textContent='Room generated.';
+    ui.detail.textContent='Same room can now be reused when you change strategy.';
+  }
+
+  function roughArrival(player,targetId){
+    // Humans estimate this visually; use straight-line distance and noisy speed rather than exact path/ETA.
+    const visualD=dist(chair(player.chair),chair(targetId))*rand(0.88,1.12);
+    return visualD/(playerSpeed(player)*rand(0.92,1.08));
+  }
+
+  function schedule(player,targetId,extraDelay=0,reason='normal'){
+    if(!player || player.chair===null) return;
+    if(state.pendingStarts.some(x=>x.playerId===player.id) || activeForPlayer(player.id)) return;
+    state.pendingStarts.push({
+      playerId:player.id,target:targetId,
+      at:state.time+strategyDelay(extraDelay),
+      version:state.targetVersion,reason
+    });
+  }
+
+  function chooseOrchestrator(){
+    const candidates=eligiblePlayers();
+    if(!candidates.length) return null;
     const target=chair(state.target);
-    const eligible=eligiblePlayers();
-    if(!eligible.length) return null;
 
-    if(state.c.strategy==='Superman'){
-      const sp=playerById(state.room.supermanId);
-      if(!sp || !safeToStand(sp)) return null;
-      const [a,b]=state.room.superPair;
-      if(state.target!==a && state.target!==b) return null;
-      if(sp.chair!==a && sp.chair!==b) return null;
-      if(sp.chair===state.target) return null;
+    // A human coordinator sees approximate geometry, not exact shortest paths and ETAs.
+    const scored=candidates.map(p=>{
+      const pc=chair(p.chair);
+      const nextVacancyValue=dist(pc,state.mouse)*rand(0.82,1.18);
+      const runCost=dist(pc,target)*rand(0.85,1.15);
+      const reachPenalty=roughArrival(p,state.target)*state.c.mouseSpeed*PX_PER_METER*0.30;
+      return {p,score:nextVacancyValue-runCost*0.18-reachPenalty};
+    }).sort((a,b)=>b.score-a.score);
 
-      // Human Superman waits until the Mouse is committed enough, while keeping a safety margin.
-      const mt=mouseTimeToTarget();
-      const pt=travelTime(sp,state.target);
-      const margin=0.18 + state.c.reaction;
-      if(mt > pt + margin){
-        // Wait for a late but safe launch.
-        if(mt > pt + margin + 0.35) return {wait:true};
-        return sp;
+    const top=scored.slice(0,Math.min(3,scored.length));
+    const r=Math.random();
+    return (r<0.62?top[0]:r<0.88?(top[1]||top[0]):(top[2]||top[0])).p;
+  }
+
+  function circularCandidates(){
+    const out=[],order=state.circularOrder,idx=order.indexOf(state.target);
+    for(let k=1;k<order.length;k++){
+      const source=order[(idx-k+order.length)%order.length];
+      const p=occupantOf(source);
+      if(p && safeToStand(p) && !activeForPlayer(p.id)) out.push(p);
+    }
+    return out;
+  }
+
+  function planResponses(){
+    if(state.done) return;
+    const s=state.c.strategy;
+
+    // Superman checks continuously because the launch rule depends on Mouse progress.
+    if(s==='Superman'){
+      if(state.plannedVersion===state.targetVersion) return;
+      if(!state.superPair.includes(state.target)) return;
+      const sp=playerById(state.supermanId);
+      if(!sp || sp.chair===null || sp.chair===state.target || !safeToStand(sp)) return;
+      if(targetProgress()>=state.superTrigger){
+        schedule(sp,state.target,0,'superman');
+        state.plannedVersion=state.targetVersion;
       }
-      return sp; // last chance: go now
+      return;
     }
 
-    if(state.c.strategy==='Circular Movement'){
-      const order=state.circularOrder;
-      const idx=order.indexOf(state.target);
-      for(let k=1;k<order.length;k++){
-        const source=order[(idx-k+order.length)%order.length];
-        const p=occupantOf(source);
-        if(p && safeToStand(p)) return p;
-      }
-      return null;
+    if(state.plannedVersion===state.targetVersion) return;
+    state.plannedVersion=state.targetVersion;
+
+    if(s==='Orchestrator'){
+      const p=chooseOrchestrator();
+      if(p) schedule(p,state.target,0,'orchestrator');
+      return;
     }
 
-    if(state.c.strategy==='Pairs'){
+    if(s==='Circular Movement'){
+      const cand=circularCandidates();
+      if(!cand.length) return;
+      schedule(cand[0],state.target,0,'intended');
+      const prob=CONFLICT_BASE[s]+state.c.error*0.7;
+      if(cand[1] && Math.random()<prob) schedule(cand[1],state.target,rand(0.03,0.18),'premature');
+      return;
+    }
+
+    if(s==='Pairs'){
+      const eligible=eligiblePlayers();
+      if(!eligible.length) return;
+      let intended=null;
       if(state.lastVacatedBy!==null){
         const prev=playerById(state.lastVacatedBy);
         if(prev && prev.pair!==null){
           const partner=playerById(prev.pair);
-          if(partner && partner.chair!==state.target && safeToStand(partner)) return partner;
+          if(partner && partner.chair!==null && safeToStand(partner)) intended=partner;
         }
       }
-      // Initial move: prefer a player whose paired partner is far from the target.
-      return eligible.sort((a,b)=>{
-        const ap=a.pair!==null?playerById(a.pair):null;
-        const bp=b.pair!==null?playerById(b.pair):null;
-        const sa=(ap?dist(chair(ap.chair),target):0)-dist(chair(a.chair),target)*0.2;
-        const sb=(bp?dist(chair(bp.chair),target):0)-dist(chair(b.chair),target)*0.2;
-        return sb-sa;
-      })[0];
-    }
+      if(!intended){
+        intended=eligible.slice().sort((a,b)=>roughArrival(a,state.target)-roughArrival(b,state.target))[0];
+      }
+      schedule(intended,state.target,0,'pair');
 
-    if(state.c.strategy==='Zoning'){
-      const z=zoneOf(target), oz=oppositeZone(z);
-      const inOpp=eligible.filter(p=>zoneOf(chair(p.chair))===oz);
-      const pool=inOpp.length?inOpp:eligible;
-      // Choose far away, but still capable of winning the race.
-      const mt=mouseTimeToTarget();
-      const feasible=pool.filter(p=>travelTime(p,state.target)+0.10<mt);
-      const use=feasible.length?feasible:pool;
-      return use.sort((a,b)=>dist(chair(b.chair),target)-dist(chair(a.chair),target))[0];
-    }
-
-    if(state.c.strategy==='Self-Organization'){
-      // Independent humans: several may volunteer; conflict adds delay and may select a poor volunteer.
-      const volunteers=eligible.filter(p=>{
-        const urgency=1-clamp(mouseTimeToTarget()/5,0,1);
-        const pVolunteer=0.18+0.35*urgency;
-        return Math.random()<pVolunteer;
-      });
-      const pool=volunteers.length?volunteers:eligible;
-      state.extraConflictDelay = Math.max(0,pool.length-1)*0.12;
-      return pool[Math.floor(Math.random()*pool.length)];
-    }
-
-    // Orchestrator: maximize next Mouse journey while requiring a plausible winning race.
-    const mt=mouseTimeToTarget();
-    const feasible=eligible.filter(p=>travelTime(p,state.target)+state.c.communication+0.08<mt);
-    const pool=feasible.length?feasible:eligible;
-    return pool.sort((a,b)=>{
-      const sa=dist(chair(a.chair),target)+0.65*dist(chair(a.chair),state.mouse)-0.25*travelTime(a,state.target)*state.c.mouseSpeed*PX_PER_METER;
-      const sb=dist(chair(b.chair),target)+0.65*dist(chair(b.chair),state.mouse)-0.25*travelTime(b,state.target)*state.c.mouseSpeed*PX_PER_METER;
-      return sb-sa;
-    })[0];
-  }
-
-  function maybePlanMove(){
-    if(state.done || state.activeMove || state.pendingChoice) return;
-    const pick=chooseDefender();
-    if(pick && pick.wait) return;
-    if(!pick) return;
-    const delay=strategyDelay()+(state.extraConflictDelay||0);
-    state.extraConflictDelay=0;
-    state.pendingChoice={playerId:pick.id,at:state.time+delay};
-  }
-
-  function startMove(player){
-    if(!player || player.chair===state.target || !safeToStand(player)) return;
-
-    const origin=player.chair;
-    const target=state.target;
-
-    // Explicit physical rule:
-    // once a player stands up from a chair, they must complete a move to another chair.
-    // They cannot abort and return to the chair they just left.
-    if(player.lastDepartedChair === target && player.lastSeatedChair === origin){
+      const others=eligible.filter(p=>p.id!==intended.id).sort(()=>Math.random()-0.5);
+      const prob=CONFLICT_BASE[s]+state.c.error*0.8;
+      if(others[0] && Math.random()<prob) schedule(others[0],state.target,rand(0.02,0.22),'other-pair');
+      if(others[1] && Math.random()<prob*0.35) schedule(others[1],state.target,rand(0.08,0.28),'other-pair');
       return;
     }
-    const from=chair(origin), to=chair(target);
-    player.lastDepartedChair=origin;
-    player.chair=null; // Butt is off the chair: origin is now empty.
-    const route=buildPath(from,to,[origin,target]);
-    state.activeMove={
-      playerId:player.id,origin,target,
-      x:from.x,y:from.y,
-      route,routeIndex:0,
-      total:pathLength(from,to,[origin,target]),traveled:0
-    };
-    state.pendingChoice=null;
+
+    if(s==='Zoning'){
+      const eligible=eligiblePlayers();
+      if(!eligible.length) return;
+      const oz=oppositeZone(zoneOf(chair(state.target)));
+      let pool=eligible.filter(p=>zoneOf(chair(p.chair))===oz);
+      if(!pool.length) pool=eligible;
+      pool=pool.slice().sort((a,b)=>roughArrival(a,state.target)-roughArrival(b,state.target));
+      schedule(pool[0],state.target,0,'zone');
+
+      const prob=CONFLICT_BASE[s]+state.c.error*0.8;
+      if(pool[1] && Math.random()<prob) schedule(pool[1],state.target,rand(0.03,0.20),'same-zone');
+      if(pool[2] && Math.random()<prob*0.35) schedule(pool[2],state.target,rand(0.08,0.30),'same-zone');
+      return;
+    }
+
+    // Self-organization: independent people make their own decisions.
+    const eligible=eligiblePlayers();
+    if(!eligible.length) return;
+    const target=chair(state.target);
+    const mouseUrgency=1-clamp(dist(state.mouse,target)/(5*PX_PER_METER),0,1);
+    const volunteers=[];
+    for(const p of eligible){
+      const d=dist(chair(p.chair),target);
+      const closeness=1-clamp(d/(8*PX_PER_METER),0,1);
+      const probability=clamp(0.08+0.24*closeness+0.22*mouseUrgency+state.c.error*0.5,0.05,0.68);
+      if(Math.random()<probability) volunteers.push(p);
+    }
+    if(!volunteers.length){
+      volunteers.push(eligible.slice().sort((a,b)=>roughArrival(a,state.target)-roughArrival(b,state.target))[0]);
+    }
+    volunteers
+      .sort((a,b)=>roughArrival(a,state.target)-roughArrival(b,state.target))
+      .slice(0,4)
+      .forEach((p,i)=>schedule(p,state.target,rand(0,i*0.10+0.05),'self'));
   }
 
-  function completeMove(){
-    const m=state.activeMove;
+  function startPendingMoves(){
+    const due=state.pendingStarts.filter(x=>x.at<=state.time);
+    state.pendingStarts=state.pendingStarts.filter(x=>x.at>state.time);
+
+    for(const ps of due){
+      const p=playerById(ps.playerId);
+      if(!p || p.chair===null || activeForPlayer(p.id)) continue;
+
+      let targetId=ps.target;
+      const empties=emptyChairIds();
+
+      // If the situation changed before this person actually started, most people update rather than run blindly.
+      if(!empties.includes(targetId)){
+        if(Math.random()<0.78) continue;
+        targetId=state.target;
+        if(!empties.includes(targetId)) continue;
+      }
+
+      if(!safeToStand(p)) continue;
+      if(p.lastDepartedChair===targetId && p.lastSeatedChair===p.chair) continue;
+
+      const origin=p.chair;
+      const from=chair(origin),to=chair(targetId);
+      p.lastDepartedChair=origin;
+      p.chair=null; // From this instant, the origin is another empty chair.
+
+      state.activeMoves.push({
+        playerId:p.id,origin,target:targetId,
+        x:from.x,y:from.y,
+        route:buildPath(from,to,[origin,targetId]),routeIndex:0,
+        startedAt:state.time,
+        conflictCheckAt:state.time+rand(0.20,0.48)*(1+state.c.error),
+        pausedUntil:0,retargets:0,reason:ps.reason
+      });
+    }
+  }
+
+  function remainingMoveDistance(m){
+    if(m.routeIndex>=m.route.length) return 0;
+    let total=dist({x:m.x,y:m.y},m.route[m.routeIndex]);
+    for(let i=m.routeIndex;i<m.route.length-1;i++) total+=dist(m.route[i],m.route[i+1]);
+    return total;
+  }
+
+  function chooseRetarget(m){
+    let empties=emptyChairIds().filter(id=>id!==m.origin && id!==m.target);
+    if(!empties.length) empties=emptyChairIds().filter(id=>id!==m.origin);
+    if(!empties.length) return null;
+
+    const claimed=new Set(state.activeMoves.filter(x=>x!==m).map(x=>x.target));
+    let pool=empties.filter(id=>!claimed.has(id));
+    if(!pool.length) pool=empties;
+
+    // A confused human usually grabs a visibly close open chair, not the globally optimal one.
+    return pool.map(id=>({
+      id,
+      score:dist({x:m.x,y:m.y},chair(id))*rand(0.88,1.18)
+    })).sort((a,b)=>a.score-b.score)[0].id;
+  }
+
+  function retargetMove(m,why='conflict'){
+    const newTarget=chooseRetarget(m);
+    if(newTarget===null) return false;
+    m.target=newTarget;
+    m.route=buildPath({x:m.x,y:m.y},chair(newTarget),[m.origin,newTarget]);
+    m.routeIndex=0;
+    m.pausedUntil=state.time+rand(0.18,0.55)*(1+state.c.error*2);
+    m.retargets++;
+    state.retargets++;
+    if(why==='conflict') state.conflicts++;
+    return true;
+  }
+
+  function resolveConflicts(){
+    const groups=new Map();
+    for(const m of state.activeMoves){
+      if(!groups.has(m.target)) groups.set(m.target,[]);
+      groups.get(m.target).push(m);
+    }
+
+    for(const group of groups.values()){
+      if(group.length<2) continue;
+
+      // The person most likely to arrive first keeps the chair. Others notice and improvise.
+      const ranked=group.slice().sort((a,b)=>{
+        const pa=playerById(a.playerId),pb=playerById(b.playerId);
+        const ta=remainingMoveDistance(a)/playerSpeed(pa);
+        const tb=remainingMoveDistance(b)/playerSpeed(pb);
+        return ta-tb;
+      });
+      const leader=ranked[0];
+
+      for(const m of ranked.slice(1)){
+        if(state.time>=m.conflictCheckAt && m.target===leader.target){
+          retargetMove(m,'conflict');
+        }
+      }
+    }
+  }
+
+  function chooseMouseNextTarget(){
+    const empties=emptyChairIds();
+    if(!empties.length) return null;
+    if(empties.length===1) return empties[0];
+
+    // Multiple standing people create multiple attack opportunities.
+    // Once the locked target closes, the Mouse attacks the nearest visible vacancy.
+    return empties.map(id=>({
+      id,
+      d:pathLength(state.mouse,chair(id),[id])
+    })).sort((a,b)=>a.d-b.d)[0].id;
+  }
+
+  function completeMove(m){
     const p=playerById(m.playerId);
-    if(!p) return;
+    if(!p) return false;
+
+    // Someone else may have reached this chair first while the player was running.
+    if(occupantOf(m.target)){
+      return retargetMove(m,'occupied');
+    }
+
     p.chair=m.target;
     p.lastSeatedChair=m.target;
     state.fatigue[p.id]=(state.fatigue[p.id]||0)+1;
     state.moves++;
     state.lastVacatedBy=p.id;
-    state.target=m.origin;
-    state.mouseRoute=[];
-    state.mouseRouteTarget=null;
-    state.activeMove=null;
-    state.pendingChoice=null;
-    state.planAt=state.time;
+
+    const closedLockedTarget=(m.target===state.target);
+    state.activeMoves=state.activeMoves.filter(x=>x!==m);
+
+    if(closedLockedTarget){
+      const next=chooseMouseNextTarget();
+      if(next!==null) setTarget(next);
+    }
+    return true;
   }
 
-  function fail(reason){
-    state.done=true; state.running=false; state.outcome=reason;
-    ui.status.textContent=reason;
-    stopAnimation(false);
-    render();
-  }
-  function survive(){
-    state.done=true; state.running=false; state.outcome='Survived time limit';
-    ui.status.textContent='Survived the configured time limit.';
-    stopAnimation(false);
-    render();
+  function advanceMoves(dt){
+    const copy=state.activeMoves.slice();
+    for(const m of copy){
+      if(!state.activeMoves.includes(m)) continue;
+      if(state.time<m.pausedUntil) continue;
+
+      if(occupantOf(m.target)){
+        if(!retargetMove(m,'occupied')) continue;
+      }
+
+      const p=playerById(m.playerId);
+      let remaining=playerSpeed(p)*dt;
+
+      while(remaining>0 && m.routeIndex<m.route.length){
+        const wp=m.route[m.routeIndex];
+        const d=dist({x:m.x,y:m.y},wp);
+        if(d<0.001){ m.routeIndex++; continue; }
+        if(remaining>=d){
+          m.x=wp.x;m.y=wp.y;remaining-=d;m.routeIndex++;
+        }else{
+          m.x+=(wp.x-m.x)/d*remaining;
+          m.y+=(wp.y-m.y)/d*remaining;
+          remaining=0;
+        }
+      }
+
+      if(m.routeIndex>=m.route.length) completeMove(m);
+    }
   }
 
   function refreshMouseRoute(){
@@ -653,86 +843,100 @@
     state.mouseRouteTarget=state.target;
   }
 
+  function advanceMouse(dt){
+    if(state.mouseRouteTarget!==state.target || !state.mouseRoute.length) refreshMouseRoute();
+    let remaining=state.c.mouseSpeed*PX_PER_METER*dt;
+
+    while(remaining>0 && state.mouseRoute.length){
+      const wp=state.mouseRoute[0];
+      const d=dist(state.mouse,wp);
+      if(d<0.001){ state.mouseRoute.shift(); continue; }
+      if(remaining>=d){
+        state.mouse.x=wp.x;state.mouse.y=wp.y;
+        state.mouseDistance+=d;remaining-=d;state.mouseRoute.shift();
+      }else{
+        state.mouse.x+=(wp.x-state.mouse.x)/d*remaining;
+        state.mouse.y+=(wp.y-state.mouse.y)/d*remaining;
+        state.mouseDistance+=remaining;remaining=0;
+      }
+    }
+
+    if(!state.mouseRoute.length && dist(state.mouse,chair(state.target))<1.5){
+      fail('Mouse reached the empty chair');
+    }
+  }
+
+  function fail(reason){
+    state.done=true;state.running=false;state.outcome=reason;
+    stopAnimation(false);
+  }
+
+  function survive(){
+    state.done=true;state.running=false;state.outcome='Survived time limit';
+    stopAnimation(false);
+  }
+
   function tick(dt){
     if(!state || !state.running || state.done) return;
     state.time+=dt;
     if(state.time>=state.c.maxTime){ survive(); return; }
 
-    if(state.pendingChoice && state.time>=state.pendingChoice.at){
-      const p=playerById(state.pendingChoice.playerId);
-      startMove(p);
-    }
+    planResponses();
+    startPendingMoves();
+    resolveConflicts();
 
-    maybePlanMove();
+    // Small fixed simulation steps keep arrival races effectively simultaneous.
+    advanceMouse(dt);
+    if(state.done) return;
+    advanceMoves(dt);
+  }
 
-    // Move Mouse along an obstacle-avoiding route to its locked target.
-    if(state.mouseRouteTarget!==state.target || !state.mouseRoute.length) refreshMouseRoute();
-    let remaining=state.c.mouseSpeed*PX_PER_METER*dt;
-    while(remaining>0 && state.mouseRoute.length){
-      const wp=state.mouseRoute[0];
-      const d=dist(state.mouse,wp);
-      if(remaining>=d){
-        state.mouseDistance+=d; remaining-=d;
-        state.mouse.x=wp.x; state.mouse.y=wp.y;
-        state.mouseRoute.shift();
-      } else {
-        state.mouse.x += (wp.x-state.mouse.x)/d*remaining;
-        state.mouse.y += (wp.y-state.mouse.y)/d*remaining;
-        state.mouseDistance+=remaining; remaining=0;
-      }
-    }
-    if(!state.mouseRoute.length && dist(state.mouse,chair(state.target))<1.5){
-      fail('Mouse reached the empty chair');
-      return;
-    }
-
-    // Move defender along an obstacle-avoiding route.
-    if(state.activeMove){
-      const m=state.activeMove, p=playerById(m.playerId);
-      let remainingP=playerSpeed(p)*dt;
-      while(remainingP>0 && m.routeIndex<m.route.length){
-        const wp=m.route[m.routeIndex];
-        const d2=Math.hypot(wp.x-m.x,wp.y-m.y);
-        if(remainingP>=d2){
-          m.x=wp.x; m.y=wp.y; m.traveled+=d2; remainingP-=d2; m.routeIndex++;
-        } else {
-          m.x += (wp.x-m.x)/d2*remainingP;
-          m.y += (wp.y-m.y)/d2*remainingP;
-          m.traveled+=remainingP; remainingP=0;
-        }
-      }
-      if(m.routeIndex>=m.route.length) completeMove();
+  function runFrameDelta(dt){
+    let left=Math.min(dt,0.08);
+    while(left>0 && state && state.running && !state.done){
+      const step=Math.min(SIM_DT,left);
+      tick(step);
+      left-=step;
     }
   }
 
   function step(ts){
     if(!state || !state.running || paused || state.done) return;
     if(lastTs===null) lastTs=ts;
-    const dt=Math.min(FPS_DT_CAP,(ts-lastTs)/1000);
+    const dt=(ts-lastTs)/1000;
     lastTs=ts;
-    tick(dt);
+    runFrameDelta(dt);
     render();
     if(state.running && !state.done) raf=requestAnimationFrame(step);
   }
 
   function start(){
     if(!baseRoom) generateRoom();
-    if(!state || state.done) resetState();
+    if(!state || state.done) initState(baseRoom,controls.strategy.value,cfg(),true);
     state.c=cfg();
-    state.running=true; paused=false; state.outcome='Running';
+    state.running=true;paused=false;state.outcome='Running';
     ui.status.textContent='Simulation running.';
     lastTs=null;
     stopAnimation(false);
     raf=requestAnimationFrame(step);
   }
+
   function pause(){
     if(!state || state.done) return;
     paused=!paused;
     ui.status.textContent=paused?'Paused.':'Simulation running.';
-    if(!paused){ lastTs=null; raf=requestAnimationFrame(step); }
+    if(!paused){ lastTs=null;raf=requestAnimationFrame(step); }
   }
+
+  function resetCurrent(){
+    if(!baseRoom) return;
+    stopAnimation();
+    initState(baseRoom,controls.strategy.value,cfg(),true);
+    ui.status.textContent='Reset on the same room.';
+  }
+
   function stopAnimation(clear=true){
-    if(raf!==null){ cancelAnimationFrame(raf); raf=null; }
+    if(raf!==null){ cancelAnimationFrame(raf);raf=null; }
     lastTs=null;
     if(clear && state) state.running=false;
   }
@@ -748,102 +952,116 @@
 
     for(const ch of state.room.chairs){
       const el=document.createElement('div');
-      const occ=occupied.get(ch.id);
-      const isTarget=ch.id===state.target;
+      const occ=occupied.get(ch.id),isTarget=ch.id===state.target;
       el.className='chair '+(occ?'occupied':'empty')+(isTarget?' target':'');
-      if(state.c.strategy==='Superman' && state.room.superPair.includes(ch.id)) el.classList.add('super');
-      el.style.left=ch.x+'px'; el.style.top=ch.y+'px';
+      if(state.c.strategy==='Superman' && state.superPair.includes(ch.id)) el.classList.add('super');
+      el.style.left=ch.x+'px';el.style.top=ch.y+'px';
       el.title=`Chair ${ch.id+1}`;
       if(occ){
-        const dot=document.createElement('span'); dot.className='player-dot'; el.appendChild(dot);
-      } else el.textContent='○';
+        const dot=document.createElement('span');dot.className='player-dot';el.appendChild(dot);
+      }else el.textContent='○';
       arena.appendChild(el);
     }
 
-    if(state.activeMove){
-      const m=state.activeMove;
+    for(const m of state.activeMoves){
       const p=document.createElement('div');
-      p.className='moving-player'; p.style.left=m.x+'px'; p.style.top=m.y+'px';
-      p.textContent=m.playerId+1; p.title='Moving defender';
+      p.className='moving-player'+(state.time<m.pausedUntil?' confused':'');
+      p.style.left=m.x+'px';p.style.top=m.y+'px';
+      p.textContent=m.playerId+1;
+      p.title=m.retargets?`Moving defender — retargeted ${m.retargets}×`:'Moving defender';
       arena.appendChild(p);
     }
 
     const mouse=document.createElement('div');
-    mouse.className='mouse'; mouse.textContent='🐭';
-    mouse.style.left=state.mouse.x+'px'; mouse.style.top=state.mouse.y+'px';
+    mouse.className='mouse';mouse.textContent='🐭';
+    mouse.style.left=state.mouse.x+'px';mouse.style.top=state.mouse.y+'px';
     arena.appendChild(mouse);
 
     ui.time.textContent=state.time.toFixed(1)+' s';
-    ui.mouseDist.textContent=state.mouseDistance.toFixed(0);
+    ui.mouseDist.textContent=(state.mouseDistance/PX_PER_METER).toFixed(1)+' m';
     ui.moves.textContent=state.moves;
+    ui.conflicts.textContent=state.conflicts;
     ui.target.textContent=(state.target+1).toString();
     ui.outcome.textContent=state.outcome;
+    ui.detail.textContent=`Open chairs: ${emptyChairIds().length} • Moving people: ${state.activeMoves.length}`;
   }
 
-  // Fast non-visual simulation for Monte Carlo comparison.
-  function simulateFast(strategy, roomTemplate, c){
-    const savedState=state, savedBase=baseRoom;
-    baseRoom=clone(roomTemplate);
-    controls.strategy.value=strategy;
-    resetState();
-    state.c={...c,strategy};
-    state.running=true;
-    state.done=false;
-    state.outcome='Running';
+  function simulateFast(strategy,room,baseConfig){
+    const savedState=state;
+    const c=configForStrategy(baseConfig,strategy);
+    initState(room,strategy,c,false);
+    state.running=true;state.outcome='Running';
+
     let guard=0;
-    const dt=0.025;
-    while(!state.done && state.time<c.maxTime && guard<100000){
-      tick(dt); guard++;
+    while(!state.done && state.time<c.maxTime && guard<300000){
+      tick(SIM_DT);
+      guard++;
     }
-    const out={time:state.time,moves:state.moves,mouseDistance:state.mouseDistance,win:state.outcome==='Survived time limit'};
-    state=savedState; baseRoom=savedBase;
+
+    const out={
+      time:state.time,moves:state.moves,conflicts:state.conflicts,
+      retargets:state.retargets,mouseDistance:state.mouseDistance/PX_PER_METER,
+      win:state.outcome==='Survived time limit'
+    };
+    state=savedState;
     return out;
   }
 
   async function batchCompare(){
     stopAnimation();
-    ui.results.innerHTML='<div class="mini">Running 1,500 simulations…</div>';
-    await new Promise(r=>setTimeout(r,20));
-    const originalStrategy=controls.strategy.value;
-    const c=cfg();
-    const strategies=['Orchestrator','Superman','Circular Movement','Pairs','Zoning','Self-Organization'];
-    const rows=[];
-    for(const s of strategies){
-      const vals=[];
-      for(let i=0;i<250;i++){
-        controls.strategy.value=s;
-        generateRoom();
-        const room=clone(baseRoom);
-        vals.push(simulateFast(s,room,{...c,strategy:s}));
-      }
-      vals.sort((a,b)=>a.time-b.time);
-      const avg=vals.reduce((x,v)=>x+v.time,0)/vals.length;
-      const med=vals[Math.floor(vals.length/2)].time;
-      const p90=vals[Math.floor(vals.length*0.9)].time;
-      const wins=vals.filter(v=>v.win).length;
-      rows.push({s,avg,med,p90,wins});
-    }
-    controls.strategy.value=originalStrategy;
-    generateRoom();
+    ui.results.innerHTML='<div class="mini">Running paired simulations on identical room layouts…</div>';
+    await new Promise(r=>setTimeout(r,25));
 
-    rows.sort((a,b)=>b.med-a.med);
+    const base=cfg();
+    const strategies=['Orchestrator','Superman','Circular Movement','Pairs','Zoning','Self-Organization'];
+    const vals=Object.fromEntries(strategies.map(s=>[s,[]]));
+    const r=arena.getBoundingClientRect(),w=Math.max(500,r.width),h=Math.max(480,r.height);
+
+    for(let i=0;i<250;i++){
+      const room=createRoom(base,w,h);
+      if(!room) continue;
+      for(const s of strategies) vals[s].push(simulateFast(s,room,base));
+      if(i%25===24){
+        ui.results.innerHTML=`<div class="mini">Running paired simulations… ${i+1}/250 rooms</div>`;
+        await new Promise(r=>setTimeout(r,0));
+      }
+    }
+
+    const rows=strategies.map(s=>{
+      const a=vals[s].slice().sort((x,y)=>x.time-y.time);
+      const avg=a.reduce((sum,v)=>sum+v.time,0)/a.length;
+      const med=a[Math.floor(a.length/2)].time;
+      const p90=a[Math.floor(a.length*0.9)].time;
+      const wins=a.filter(v=>v.win).length;
+      const conf=a.reduce((sum,v)=>sum+v.conflicts,0)/a.length;
+      return {s,avg,med,p90,wins,conf,n:a.length};
+    }).sort((a,b)=>b.med-a.med);
+
     ui.results.innerHTML=
       '<h3>Monte Carlo comparison</h3>'+
-      '<table><thead><tr><th>Strategy</th><th>Avg</th><th>Median</th><th>P90</th><th>Survived</th></tr></thead><tbody>'+
-      rows.map(r=>`<tr><td>${r.s}</td><td>${r.avg.toFixed(1)}s</td><td>${r.med.toFixed(1)}s</td><td>${r.p90.toFixed(1)}s</td><td>${r.wins}/250</td></tr>`).join('')+
-      '</tbody></table><div class="mini" style="margin-top:8px">Results depend on speed, human timing, error, safety radius and obstacle routing.</div>';
-    ui.status.textContent='Comparison complete.';
+      '<table><thead><tr><th>Strategy</th><th>Avg</th><th>Median</th><th>P90</th><th>Conflicts/run</th><th>Survived</th></tr></thead><tbody>'+
+      rows.map(r=>`<tr><td>${r.s}</td><td>${r.avg.toFixed(1)}s</td><td>${r.med.toFixed(1)}s</td><td>${r.p90.toFixed(1)}s</td><td>${r.conf.toFixed(2)}</td><td>${r.wins}/${r.n}</td></tr>`).join('')+
+      '</tbody></table>'+
+      '<div class="mini" style="margin-top:8px">Each strategy was tested on the same 250 room layouts. Strategy-specific human timing presets are applied automatically; shared physical settings remain identical.</div>';
+
+    ui.status.textContent='Paired comparison complete.';
+    if(baseRoom) initState(baseRoom,controls.strategy.value,cfg(),true);
   }
 
   $('generate').addEventListener('click',generateRoom);
   $('start').addEventListener('click',start);
   $('pause').addEventListener('click',pause);
-  $('reset').addEventListener('click',resetState);
+  $('reset').addEventListener('click',resetCurrent);
   $('batch').addEventListener('click',batchCompare);
+
   controls.strategy.addEventListener('change',()=>{
+    stopAnimation();
     applyTimingPreset(controls.strategy.value);
-    generateRoom();
+    if(baseRoom) initState(baseRoom,controls.strategy.value,cfg(),true);
+    else generateRoom();
+    ui.status.textContent='Strategy changed; room layout preserved.';
   });
+
   window.addEventListener('resize',()=>{ if(!state?.running) generateRoom(); });
 
   applyTimingPreset(controls.strategy.value);
