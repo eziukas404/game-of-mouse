@@ -103,7 +103,7 @@ table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:6px;bord
 <strong>Stable model rules</strong>
 <div class="mini" style="margin-top:6px">
 Fixed 20×10 m room. Mouse starts on the left; first vacancy is far right. Chairs and Mouse are physical obstacles.
-No heavy pathfinding is used: movement uses bounded local steering only, so the browser cannot get trapped in route-search loops.
+Movement uses bounded steering, with cached obstacle detours for all players and a fixed limit on route-search work.
 Superman shadows after the Mouse passes, then always commits to sprint by halfway at the latest, or earlier if the time margin gets small.
 Loose strategies can create duplicate movers, confusion, retargeting, and near-Mouse panic mistakes.
 </div>
@@ -253,7 +253,7 @@ function init(room,strategy,config){
 state={room:clone(room),c:{...config,strategy},time:0,running:false,done:false,outcome:'Ready',mouse:clone(room.mouse),mouseDist:0,target:room.empty,targetVersion:0,moves:0,conflicts:0,safetyMistakes:0,active:[],pending:[],lastVacatedBy:null,superPair:[],supermanId:null,circular:[]};
 const cx=WORLD_W/2,cy=WORLD_H/2;
 state.circular=state.room.chairs.map(x=>({id:x.id,a:Math.atan2(x.y-cy,x.x-cx)})).sort((a,b)=>a.a-b.a).map(x=>x.id);
-if(strategy==='Superman')setupSuperman();
+if(strategy==='Superman'){setupSuperman();state.targetStartDist=dist(state.mouse,ch(state.target))}
 render()
 }
 function speedSprint(p){return p.sprint*state.c.playerScale}
@@ -332,7 +332,7 @@ function startPending(){
 const due=state.pending.filter(x=>x.at<=state.time);state.pending=state.pending.filter(x=>x.at>state.time);
 for(const x of due){
 const p=player(x.pid);if(!p||p.chair==null)continue;
-if(!allowedToStand(p))continue;
+if(!allowedToStand(p)){if(x.reason==='superman')state.lastPlanned=undefined;continue}
 let target=x.target;if(!empties().includes(target))target=state.target;if(!empties().includes(target))continue;
 const origin=p.chair;p.chair=null;
 state.active.push({pid:p.id,origin,target,x:ch(origin).x,y:ch(origin).y,v:0,phase:x.reason==='superman'?'shadow':'sprint',confuseAt:state.time+rand(.22,.45),paused:0,bypassSide:0,reason:x.reason})
@@ -362,8 +362,15 @@ return true
 function mouseStep(dt){
 const goal=ch(state.target);
 let wp=localChairWaypoint(state.mouse,goal,[state.target]);if(!wp)wp=goal;
+// Give the Mouse a route around a defender too, rather than deadlocking face to face.
+if(state.active.some(m=>segmentNearPoint(state.mouse,wp,m,BODY_CLEAR))){
+wp=obstacleWaypoint(state.mouse,goal,state.active,[state.target]);if(!wp)return;
+}
 const d=dist(state.mouse,wp);if(d<.02){if(dist(state.mouse,goal)<.06){fail('Mouse reached the empty chair');return}}
 const step=state.c.mouseSpeed*dt;
+const next={x:state.mouse.x+(wp.x-state.mouse.x)/Math.max(.001,d)*Math.min(step,d),y:state.mouse.y+(wp.y-state.mouse.y)/Math.max(.001,d)*Math.min(step,d)};
+// The Mouse must not step into a defender while they are passing or waiting.
+if(state.active.some(m=>segmentNearPoint(state.mouse,next,m,BODY_CLEAR)))return;
 state.mouse.x+=(wp.x-state.mouse.x)/Math.max(.001,d)*Math.min(step,d);
 state.mouse.y+=(wp.y-state.mouse.y)/Math.max(.001,d)*Math.min(step,d);
 state.mouseDist+=Math.min(step,d);
@@ -373,6 +380,45 @@ function bypassPoint(m,side){
 const goal=ch(m.target),dx=goal.x-state.mouse.x,dy=goal.y-state.mouse.y,l=Math.hypot(dx,dy)||1,ux=dx/l,uy=dy/l,nx=-uy*side,ny=ux*side;
 const p={x:state.mouse.x+ux*PASS_AHEAD+nx*PASS_SIDE,y:state.mouse.y+uy*PASS_AHEAD+ny*PASS_SIDE};
 if(!inside(p)||chairBlocked(p,[m.origin,m.target])||dist(p,state.mouse)<BODY_CLEAR)return null;return p
+}
+// Shared physical movement: validate whole segments, including the moving Mouse.
+function obstacleWaypoint(m,goal,bodies=[state.mouse],ignore=[m.origin,m.target]){
+if(m.routeTarget!==goal.id){m.route=[];m.routeRetryAt=0;m.routeTarget=goal.id}
+const obstacles=state.room.chairs.filter(c=>!ignore.includes(c.id))
+.map(c=>({...c,r:CHAIR_CLEAR})).concat(bodies.map(b=>({x:b.x,y:b.y,r:BODY_CLEAR})));
+const clear=(a,b)=>inside(b)&&obstacles.every(o=>!segmentNearPoint(a,b,o,o.r));
+if(clear(m,goal)){m.route=[];return goal}
+if(m.route?.length){
+while(m.route.length&&dist(m,m.route[0])<.02)m.route.shift();
+if(m.route.length&&clear(m,m.route[0]))return m.route[0];
+}
+if(state.time<(m.routeRetryAt||0))return null;
+// Bounded A*: twelve vertices per obstacle, each visited at most once.
+// Polygon edges stay outside the original clearance circles.
+const nodes=[{x:m.x,y:m.y},goal];
+for(const o of obstacles)for(let i=0;i<12;i++){
+const angle=i*Math.PI/6,r=(o.r+.005)/Math.cos(Math.PI/12);
+const p={x:o.x+Math.cos(angle)*r,y:o.y+Math.sin(angle)*r};
+if(inside(p)&&obstacles.every(q=>dist(p,q)>=q.r))nodes.push(p);
+}
+const cost=nodes.map(()=>Infinity),prev=nodes.map(()=>-1),closed=new Set();cost[0]=0;
+for(let count=0;count<nodes.length;count++){
+let at=-1,best=Infinity;
+for(let i=0;i<nodes.length;i++)if(!closed.has(i)){
+const score=cost[i]+dist(nodes[i],goal);if(score<best){at=i;best=score}
+}
+if(at<0)break;
+if(at===1){
+const path=[];for(let i=1;i!==0;i=prev[i])path.unshift(nodes[i]);
+m.route=path;return path[0];
+}
+closed.add(at);
+for(let i=1;i<nodes.length;i++)if(!closed.has(i)){
+const next=cost[at]+dist(nodes[at],nodes[i]);
+if(next<cost[i]&&clear(nodes[at],nodes[i])){cost[i]=next;prev[i]=at}
+}
+}
+m.route=[];m.routeRetryAt=state.time+.1;return null
 }
 function runnerStep(m,dt){
 const p=player(m.pid);if(state.time<m.paused)return;
@@ -389,16 +435,7 @@ if(progress>=.50 || mouseETA-sprintETA<=1.0 || mouseETA<1.5)m.phase='sprint'
 const targetSpeed=m.phase==='shadow'?Math.max(state.c.mouseSpeed*1.02,Math.min(speedWalk(p)*1.2,speedSprint(p)*.5)):speedSprint(p);
 m.v=Math.min(targetSpeed,m.v+accel(p)*dt);
 
-let wp=localChairWaypoint(m,goal,[m.origin,m.target]);if(!wp)wp=goal;
-
-// Local Mouse avoidance only; no global route search.
-const predicted={x:m.x+(wp.x-m.x)/Math.max(.001,dist(m,wp))*m.v*dt,y:m.y+(wp.y-m.y)/Math.max(.001,dist(m,wp))*m.v*dt};
-if(dist(m,state.mouse)<PASS_DETECT || segmentNearPoint(m,predicted,state.mouse,BODY_CLEAR)){
-let bp=null;
-if(m.bypassSide)bp=bypassPoint(m,m.bypassSide);
-if(!bp){const a=bypassPoint(m,1),b=bypassPoint(m,-1);if(a&&b){m.bypassSide=dist(a,goal)<=dist(b,goal)?1:-1;bp=m.bypassSide===1?a:b}else{bp=a||b;m.bypassSide=a?1:-1}}
-if(bp)wp=bp;else{m.v=Math.max(0,m.v-accel(p)*2*dt);return}
-}
+const wp=obstacleWaypoint(m,goal);if(!wp){m.v=0;return}
 
 const d=dist(m,wp);if(d<.02){if(dist(m,goal)<.08){complete(m);return}}
 const step=Math.min(m.v*dt,d);
